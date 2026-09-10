@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "snowy-disk-3ef3",
+  "main": "@tanstack/react-start/server-entry",
+  "compatibility_date": "2026-09-09",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "upload_source_maps": true,
+  "limits": { "cpu_ms": 60000 },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "emistry",
+      "database_id": "3256b305-dd01-4354-aef0-2c98eedebfb1",
+      "migrations_dir": "drizzle",
+    },
+  ],
+  "r2_buckets": [{ "binding": "ASSETS_BUCKET", "bucket_name": "emistry-assets" }],
+  "workers_dev": true,
+  "routes": [{ "pattern": "shipforte.com", "custom_domain": true }],
+  "vars": { "APP_URL": "https://shipforte.com" },
+}

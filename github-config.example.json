@@ -1,0 +1,7 @@
+{
+  "GITHUB_CLIENT_ID": "your-client-id",
+  "GITHUB_CLIENT_SECRET": "your-client-secret",
+  "GITHUB_APP_SLUG": "your-app-slug",
+  "GITHUB_WEBHOOK_SECRET": "generate-a-random-secret-at-least-20-characters-long",
+  "MODERATOR_GITHUB_IDS": "your-numeric-github-user-id"
+}

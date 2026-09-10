@@ -1,0 +1,12 @@
+{
+  "semi": false,
+  "singleQuote": true,
+  "printWidth": 110,
+  "ignorePatterns": [
+    "worker-configuration.d.ts",
+    "src/routeTree.gen.ts",
+    "drizzle/meta/**",
+    "pnpm-lock.yaml",
+    ".cta.json"
+  ]
+}

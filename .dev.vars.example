@@ -1,0 +1,9 @@
+APP_URL=http://localhost:3000
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+GITHUB_APP_SLUG=
+GITHUB_WEBHOOK_SECRET=
+# Generate using: openssl rand -base64 32
+TOKEN_ENCRYPTION_KEY=
+# Comma-separated numeric GitHub user IDs. These accounts receive moderator access.
+MODERATOR_GITHUB_IDS=

@@ -1,0 +1,58 @@
+{
+  "name": "shipforte",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*"
+  },
+  "scripts": {
+    "dev": "vite dev --port 3000",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy": "pnpm build && wrangler deploy",
+    "typecheck": "tsr generate && tsc --noEmit",
+    "lint": "oxlint src",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "test": "tsx --test src/domain/*.test.ts",
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm build",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "db:seed:local": "wrangler d1 execute DB --local --file scripts/seed.sql",
+    "cf-typegen": "wrangler types",
+    "github:configure": "tsx scripts/configure-github.ts"
+  },
+  "dependencies": {
+    "@pierre/diffs": "^1.4.1",
+    "@tanstack/react-query": "latest",
+    "@tanstack/react-router": "latest",
+    "@tanstack/react-start": "latest",
+    "drizzle-orm": "^0.45.1",
+    "lucide-react": "^0.577.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tar-stream": "^3.1.7",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.26.0",
+    "@tailwindcss/vite": "^4.1.18",
+    "@tanstack/router-cli": "latest",
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/tar-stream": "^3.1.4",
+    "@vitejs/plugin-react": "^6.0.1",
+    "drizzle-kit": "^0.31.9",
+    "oxfmt": "latest",
+    "oxlint": "latest",
+    "tailwindcss": "^4.1.18",
+    "tsx": "^4.21.0",
+    "typescript": "latest",
+    "vite": "^8.0.0",
+    "wrangler": "^4.130.0"
+  }
+}
