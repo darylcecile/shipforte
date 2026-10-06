@@ -7,6 +7,7 @@ import {
   events,
   follows,
   notifications,
+  portfolioPins,
   submissions,
   uploads,
   users,
@@ -14,6 +15,10 @@ import {
 import { ranks, tiers } from '../domain/rules'
 import { canReadChallenge } from '../domain/challenge-status'
 import { ensure, HttpError, requireModerator, requireUser, stmt, type Context } from './context'
+import { submissionTranscripts } from './transcripts'
+import { readableSubmissions } from './submission-access'
+import { withRequirements } from '../domain/challenge-requirements'
+import { submissionHighlights } from './showcase'
 
 const voteCount = (value: string) =>
   sql<number>`(SELECT count(*) FROM votes WHERE submission_id=${submissions.id} AND value=${value})`.mapWith(
@@ -33,13 +38,17 @@ export async function submissionCards(c: Context, filter?: SQL, limit = 60) {
         sql<number>`COALESCE((SELECT amount FROM awards WHERE submission_id=${submissions.id} AND status='active'),0)`.mapWith(
           Number,
         ),
+      withheldKudos:
+        sql<number>`COALESCE((SELECT amount FROM awards WHERE submission_id=${submissions.id} AND status='pending'),0)`.mapWith(
+          Number,
+        ),
       imageId: sql<string | null>`(SELECT id FROM uploads WHERE submission_id=${submissions.id} LIMIT 1)`,
     })
     .from(submissions)
     .innerJoin(users, eq(users.id, submissions.userId))
     .innerJoin(challenges, eq(challenges.id, submissions.challengeId))
-    .where(filter)
-    .orderBy(desc(submissions.createdAt))
+    .where(and(readableSubmissions(c), filter))
+    .orderBy(desc(sql`COALESCE(${submissions.publishedAt}, ${submissions.createdAt})`))
     .limit(limit)
 }
 export async function bootstrap(c: Context) {
@@ -71,12 +80,16 @@ export async function home(c: Context) {
     .select({
       ...getTableColumns(challenges),
       author: users.login,
+      completed: sql<boolean>`EXISTS(SELECT 1 FROM attempts
+        WHERE challenge_id=${challenges.id} AND user_id=${c.user?.id ?? ''} AND submitted_at IS NOT NULL)`.mapWith(
+        Boolean,
+      ),
       builders:
         sql<number>`(SELECT COUNT(DISTINCT user_id) FROM attempts WHERE challenge_id=${challenges.id})`.mapWith(
           Number,
         ),
       submissionCount:
-        sql<number>`(SELECT COUNT(*) FROM submissions WHERE challenge_id=${challenges.id} AND archived=0)`.mapWith(
+        sql<number>`(SELECT COUNT(*) FROM submissions WHERE challenge_id=${challenges.id} AND archived=0 AND visibility='public')`.mapWith(
           Number,
         ),
     })
@@ -95,15 +108,30 @@ export async function home(c: Context) {
     : []
   const stats = await stmt(
     c,
-    `SELECT (SELECT COUNT(*) FROM users WHERE github_id>0) AS builders, (SELECT COUNT(*) FROM submissions) AS submissions,
+    `SELECT (SELECT COUNT(*) FROM users WHERE github_id>0) AS builders, (SELECT COUNT(*) FROM submissions WHERE visibility='public') AS submissions,
     (SELECT COALESCE(SUM(amount),0) FROM awards WHERE status='active') AS kudos`,
   ).first<{ builders: number; submissions: number; kudos: number }>()
   return {
     challenges: list,
-    attempts: mine,
+    attempts: mine.map(withRequirements),
+    mySubmissions: c.user
+      ? await c.db
+          .select({
+            id: submissions.id,
+            attemptId: submissions.attemptId,
+            visibility: submissions.visibility,
+          })
+          .from(submissions)
+          .where(eq(submissions.userId, c.user.id))
+      : [],
     recent: await submissionCards(
       c,
-      and(eq(challenges.status, 'live'), eq(submissions.archived, false), eq(submissions.revoked, false)),
+      and(
+        eq(challenges.status, 'live'),
+        eq(submissions.visibility, 'public'),
+        eq(submissions.archived, false),
+        eq(submissions.revoked, false),
+      ),
       6,
     ),
     stats,
@@ -121,7 +149,7 @@ export async function challengeDetail(c: Context, id: string) {
   if (!canReadChallenge(challenge, c.user)) throw new HttpError(404, 'Challenge not found.')
   const all = await submissionCards(c, eq(submissions.challengeId, id), 1000)
   const leaderboard = ranks(
-    all.filter((s) => !s.archived && !s.revoked),
+    all.filter((s) => s.visibility === 'public' && !s.archived && !s.revoked),
     (s) => s.up - s.down,
   )
   const mine = c.user
@@ -138,10 +166,11 @@ export async function challengeDetail(c: Context, id: string) {
         .where(and(eq(awards.userId, c.user.id), eq(awards.challengeId, id), eq(awards.status, 'active')))
     : []
   return {
-    challenge,
+    challenge: withRequirements(challenge),
     leaderboard,
-    submissions: all,
-    attempts: mine,
+    submissions: all.filter((s) => s.visibility === 'public'),
+    privateSubmissions: all.filter((s) => s.visibility === 'private'),
+    attempts: mine.map(withRequirements),
     redoKudos: currentKudos.reduce((sum, a) => sum + a.amount, 0),
     fullAward: tiers[challenge.tier],
   }
@@ -167,6 +196,8 @@ export async function submissionDetail(c: Context, id: string) {
     .where(
       and(
         eq(events.challengeId, row.challengeId),
+        sql`(${events.submissionId} IS NULL OR EXISTS(SELECT 1 FROM submissions visible_event
+          WHERE visible_event.id=${events.submissionId} AND (visible_event.visibility='public' OR visible_event.user_id=${c.user?.id ?? ''})))`,
         or(
           eq(events.userId, row.userId),
           eq(events.kind, 'challenge_archived'),
@@ -181,7 +212,16 @@ export async function submissionDetail(c: Context, id: string) {
         value: 'up' | 'down' | 'redo'
       }>()
     : null
-  return { submission: row, attempt, images, comments: discussion, timeline, myVote: myVote?.value ?? null }
+  return {
+    submission: row,
+    attempt: withRequirements(attempt),
+    images,
+    transcripts: await submissionTranscripts(c, id),
+    highlights: await submissionHighlights(c, id),
+    comments: discussion,
+    timeline,
+    myVote: myVote?.value ?? null,
+  }
 }
 export async function people(c: Context) {
   const params = new URL(c.request.url).searchParams
@@ -195,7 +235,7 @@ export async function people(c: Context) {
           Number,
         ),
       submissions:
-        sql<number>`(SELECT COUNT(*) FROM submissions WHERE user_id=${users.id} AND archived=0)`.mapWith(
+        sql<number>`(SELECT COUNT(*) FROM submissions WHERE user_id=${users.id} AND archived=0 AND visibility='public')`.mapWith(
           Number,
         ),
       following:
@@ -241,12 +281,45 @@ export async function profile(c: Context, login: string) {
     user.id,
     user.id,
   ).first<{ followers: number; following: number }>()
+  const pins = await c.db
+    .select()
+    .from(portfolioPins)
+    .where(eq(portfolioPins.userId, user.id))
+    .orderBy(portfolioPins.position)
+  const pinnedRows = await submissionCards(
+    c,
+    and(
+      eq(submissions.userId, user.id),
+      eq(submissions.visibility, 'public'),
+      eq(submissions.archived, false),
+      eq(submissions.revoked, false),
+      sql`${submissions.id} IN (SELECT submission_id FROM portfolio_pins WHERE user_id=${user.id})`,
+    ),
+    3,
+  )
   return {
     user,
     kudos: activeAwards.reduce((sum, a) => sum + a.amount, 0),
     following: Boolean(following),
     counts,
-    submissions: await submissionCards(c, eq(submissions.userId, user.id)),
+    pinned: pins.flatMap((pin) => pinnedRows.filter((row) => row.id === pin.submissionId)),
+    portfolioOptions:
+      c.user?.id === user.id
+        ? await submissionCards(
+            c,
+            and(
+              eq(submissions.userId, user.id),
+              eq(submissions.visibility, 'public'),
+              eq(submissions.archived, false),
+              eq(submissions.revoked, false),
+            ),
+            200,
+          )
+        : [],
+    submissions: await submissionCards(
+      c,
+      and(eq(submissions.userId, user.id), eq(submissions.visibility, 'public')),
+    ),
   }
 }
 export async function inbox(c: Context) {
@@ -256,9 +329,11 @@ export async function inbox(c: Context) {
       ...getTableColumns(notifications),
       progress: sql<
         string | null
-      >`(SELECT json_object('startedAt',started_at,'deadline',deadline,'submittedAt',submitted_at)
-        FROM attempts WHERE challenge_id=${notifications.challengeId} AND user_id=${notifications.subjectId}
-        ORDER BY started_at DESC LIMIT 1)`.mapWith((value: string | null) =>
+      >`(SELECT json_object('startedAt',a.started_at,'deadline',a.deadline,'submittedAt',
+          CASE WHEN a.user_id=${user.id} OR EXISTS(SELECT 1 FROM submissions progress_submission
+            WHERE progress_submission.attempt_id=a.id AND progress_submission.visibility='public') THEN a.submitted_at ELSE NULL END)
+        FROM attempts a WHERE a.challenge_id=${notifications.challengeId} AND a.user_id=${notifications.subjectId}
+        ORDER BY a.started_at DESC LIMIT 1)`.mapWith((value: string | null) =>
         value
           ? (JSON.parse(value) as { startedAt: number; deadline: number; submittedAt: number | null })
           : null,
@@ -267,13 +342,18 @@ export async function inbox(c: Context) {
         'up',(SELECT COUNT(*) FROM votes WHERE submission_id=s.id AND value='up'),
         'down',(SELECT COUNT(*) FROM votes WHERE submission_id=s.id AND value='down'),
         'redo',(SELECT COUNT(*) FROM votes WHERE submission_id=s.id AND value='redo'))
-        FROM submissions s WHERE s.challenge_id=${notifications.challengeId} AND s.user_id=${notifications.subjectId}
+        FROM submissions s WHERE s.challenge_id=${notifications.challengeId} AND s.user_id=${notifications.subjectId} AND s.visibility='public'
         ORDER BY s.created_at DESC LIMIT 1)`.mapWith((value: string | null) =>
         value ? (JSON.parse(value) as { up: number; down: number; redo: number }) : null,
       ),
     })
     .from(notifications)
-    .where(eq(notifications.userId, user.id))
+    .where(
+      and(
+        eq(notifications.userId, user.id),
+        sql`(${notifications.submissionId} IS NULL OR EXISTS(SELECT 1 FROM submissions visible_notification WHERE visible_notification.id=${notifications.submissionId} AND (visible_notification.visibility='public' OR visible_notification.user_id=${user.id})))`,
+      ),
+    )
     .orderBy(desc(notifications.createdAt))
     .limit(200)
 }
@@ -289,6 +369,6 @@ export async function moderation(c: Context) {
   requireModerator(c)
   return {
     challenges: await c.db.select().from(challenges).orderBy(desc(challenges.updatedAt)).limit(200),
-    submissions: await submissionCards(c, undefined, 200),
+    submissions: await submissionCards(c, eq(submissions.visibility, 'public'), 200),
   }
 }

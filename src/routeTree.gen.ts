@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as BuildsRouteImport } from './routes/builds'
 import { Route as LeaderboardRouteImport } from './routes/leaderboard'
 import { Route as ModerationRouteImport } from './routes/moderation'
@@ -17,6 +18,7 @@ import { Route as NotificationsRouteImport } from './routes/notifications'
 import { Route as PeopleRouteImport } from './routes/people'
 import { Route as ProposalsRouteImport } from './routes/proposals'
 import { Route as ProposeRouteImport } from './routes/propose'
+import { Route as AgentSubmissionsIdRouteImport } from './routes/agent-submissions.$id'
 import { Route as ApiSplatRouteImport } from './routes/api.$'
 import { Route as ChallengesIdRouteImport } from './routes/challenges.$id'
 import { Route as PeopleLoginRouteImport } from './routes/people_.$login'
@@ -26,6 +28,11 @@ import { Route as ChallengesIdEditRouteImport } from './routes/challenges.$id_.e
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AgentsRoute = AgentsRouteImport.update({
+  id: '/agents',
+  path: '/agents',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BuildsRoute = BuildsRouteImport.update({
@@ -63,6 +70,11 @@ const ProposeRoute = ProposeRouteImport.update({
   path: '/propose',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AgentSubmissionsIdRoute = AgentSubmissionsIdRouteImport.update({
+  id: '/agent-submissions/$id',
+  path: '/agent-submissions/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiSplatRoute = ApiSplatRouteImport.update({
   id: '/api/$',
   path: '/api/$',
@@ -91,6 +103,7 @@ const ChallengesIdEditRoute = ChallengesIdEditRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/agents': typeof AgentsRoute
   '/builds': typeof BuildsRoute
   '/leaderboard': typeof LeaderboardRoute
   '/moderation': typeof ModerationRoute
@@ -98,6 +111,7 @@ export interface FileRoutesByFullPath {
   '/people': typeof PeopleRoute
   '/proposals': typeof ProposalsRoute
   '/propose': typeof ProposeRoute
+  '/agent-submissions/$id': typeof AgentSubmissionsIdRoute
   '/api/$': typeof ApiSplatRoute
   '/challenges/$id': typeof ChallengesIdRoute
   '/people/$login': typeof PeopleLoginRoute
@@ -106,6 +120,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/agents': typeof AgentsRoute
   '/builds': typeof BuildsRoute
   '/leaderboard': typeof LeaderboardRoute
   '/moderation': typeof ModerationRoute
@@ -113,6 +128,7 @@ export interface FileRoutesByTo {
   '/people': typeof PeopleRoute
   '/proposals': typeof ProposalsRoute
   '/propose': typeof ProposeRoute
+  '/agent-submissions/$id': typeof AgentSubmissionsIdRoute
   '/api/$': typeof ApiSplatRoute
   '/challenges/$id': typeof ChallengesIdRoute
   '/people/$login': typeof PeopleLoginRoute
@@ -122,6 +138,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/agents': typeof AgentsRoute
   '/builds': typeof BuildsRoute
   '/leaderboard': typeof LeaderboardRoute
   '/moderation': typeof ModerationRoute
@@ -129,6 +146,7 @@ export interface FileRoutesById {
   '/people': typeof PeopleRoute
   '/proposals': typeof ProposalsRoute
   '/propose': typeof ProposeRoute
+  '/agent-submissions/$id': typeof AgentSubmissionsIdRoute
   '/api/$': typeof ApiSplatRoute
   '/challenges/$id': typeof ChallengesIdRoute
   '/people_/$login': typeof PeopleLoginRoute
@@ -139,6 +157,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/agents'
     | '/builds'
     | '/leaderboard'
     | '/moderation'
@@ -146,6 +165,7 @@ export interface FileRouteTypes {
     | '/people'
     | '/proposals'
     | '/propose'
+    | '/agent-submissions/$id'
     | '/api/$'
     | '/challenges/$id'
     | '/people/$login'
@@ -154,6 +174,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/agents'
     | '/builds'
     | '/leaderboard'
     | '/moderation'
@@ -161,6 +182,7 @@ export interface FileRouteTypes {
     | '/people'
     | '/proposals'
     | '/propose'
+    | '/agent-submissions/$id'
     | '/api/$'
     | '/challenges/$id'
     | '/people/$login'
@@ -169,6 +191,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/agents'
     | '/builds'
     | '/leaderboard'
     | '/moderation'
@@ -176,6 +199,7 @@ export interface FileRouteTypes {
     | '/people'
     | '/proposals'
     | '/propose'
+    | '/agent-submissions/$id'
     | '/api/$'
     | '/challenges/$id'
     | '/people_/$login'
@@ -185,6 +209,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AgentsRoute: typeof AgentsRoute
   BuildsRoute: typeof BuildsRoute
   LeaderboardRoute: typeof LeaderboardRoute
   ModerationRoute: typeof ModerationRoute
@@ -192,6 +217,7 @@ export interface RootRouteChildren {
   PeopleRoute: typeof PeopleRoute
   ProposalsRoute: typeof ProposalsRoute
   ProposeRoute: typeof ProposeRoute
+  AgentSubmissionsIdRoute: typeof AgentSubmissionsIdRoute
   ApiSplatRoute: typeof ApiSplatRoute
   ChallengesIdRoute: typeof ChallengesIdRoute
   PeopleLoginRoute: typeof PeopleLoginRoute
@@ -206,6 +232,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/agents': {
+      id: '/agents'
+      path: '/agents'
+      fullPath: '/agents'
+      preLoaderRoute: typeof AgentsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/builds': {
@@ -257,6 +290,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProposeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agent-submissions/$id': {
+      id: '/agent-submissions/$id'
+      path: '/agent-submissions/$id'
+      fullPath: '/agent-submissions/$id'
+      preLoaderRoute: typeof AgentSubmissionsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/$': {
       id: '/api/$'
       path: '/api/$'
@@ -297,6 +337,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AgentsRoute: AgentsRoute,
   BuildsRoute: BuildsRoute,
   LeaderboardRoute: LeaderboardRoute,
   ModerationRoute: ModerationRoute,
@@ -304,6 +345,7 @@ const rootRouteChildren: RootRouteChildren = {
   PeopleRoute: PeopleRoute,
   ProposalsRoute: ProposalsRoute,
   ProposeRoute: ProposeRoute,
+  AgentSubmissionsIdRoute: AgentSubmissionsIdRoute,
   ApiSplatRoute: ApiSplatRoute,
   ChallengesIdRoute: ChallengesIdRoute,
   PeopleLoginRoute: PeopleLoginRoute,

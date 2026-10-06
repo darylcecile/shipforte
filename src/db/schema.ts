@@ -1,6 +1,9 @@
 import { sql } from 'drizzle-orm'
 import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 import { challengeStatuses } from '../domain/challenge-status'
+import type { SubmissionInput } from '../domain/agent-submissions'
+import type { SessionUsage } from '../domain/transcript-data'
+import type { Requirement, RequirementEvidence } from '../domain/challenge-requirements'
 
 export const users = sqliteTable('users', {
   id: text().primaryKey(),
@@ -36,6 +39,7 @@ export const oauthStates = sqliteTable('oauth_states', {
   hash: text().primaryKey(),
   verifier: text().notNull(),
   expiresAt: integer('expires_at').notNull(),
+  returnTo: text('return_to').notNull().default('/'),
 })
 export const challenges = sqliteTable(
   'challenges',
@@ -47,6 +51,7 @@ export const challenges = sqliteTable(
     title: text().notNull(),
     summary: text().notNull(),
     brief: text().notNull(),
+    requirements: text({ mode: 'json' }).$type<Requirement[]>(),
     tier: text({ enum: ['small', 'medium', 'large', 'xlarge'] }).notNull(),
     days: integer().notNull(),
     category: text().notNull().default('Tools'),
@@ -71,6 +76,7 @@ export const attempts = sqliteTable(
       .references(() => challenges.id),
     title: text().notNull(),
     brief: text().notNull(),
+    requirements: text({ mode: 'json' }).$type<Requirement[]>(),
     tier: text({ enum: ['small', 'medium', 'large', 'xlarge'] }).notNull(),
     days: integer().notNull(),
     fullAward: integer('full_award').notNull(),
@@ -106,6 +112,9 @@ export const submissions = sqliteTable(
     title: text().notNull(),
     description: text().notNull(),
     demoUrl: text('demo_url'),
+    evidence: text({ mode: 'json' }).$type<RequirementEvidence[]>().notNull().default([]),
+    videoUrl: text('video_url').notNull().default(''),
+    learnings: text().notNull().default(''),
     repoId: integer('repo_id').notNull(),
     repoName: text('repo_name').notNull(),
     repoRoot: integer('repo_root').notNull(),
@@ -118,6 +127,10 @@ export const submissions = sqliteTable(
     revoked: integer({ mode: 'boolean' }).notNull().default(false),
     redoUnlocked: integer('redo_unlocked', { mode: 'boolean' }).notNull().default(false),
     moderatorAllowed: integer('moderator_allowed', { mode: 'boolean' }).notNull().default(false),
+    visibility: text({ enum: ['public', 'private'] })
+      .notNull()
+      .default('public'),
+    publishedAt: integer('published_at'),
     revision: integer().notNull().default(0),
     createdAt: integer('created_at').notNull(),
   },
@@ -127,6 +140,42 @@ export const submissions = sqliteTable(
     index('submission_fingerprint').on(t.fingerprint),
   ],
 )
+export const portfolioPins = sqliteTable(
+  'portfolio_pins',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    submissionId: text('submission_id')
+      .notNull()
+      .references(() => submissions.id),
+    position: integer().notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.submissionId] }),
+    uniqueIndex('portfolio_position').on(t.userId, t.position),
+  ],
+)
+
+export const transcriptHighlights = sqliteTable(
+  'transcript_highlights',
+  {
+    id: text().primaryKey(),
+    submissionId: text('submission_id')
+      .notNull()
+      .references(() => submissions.id),
+    transcriptId: text('transcript_id')
+      .notNull()
+      .references(() => transcripts.id),
+    turnIndex: integer('turn_index'),
+    startOffset: integer('start_offset').notNull(),
+    endOffset: integer('end_offset').notNull(),
+    caption: text().notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('highlight_submission').on(t.submissionId)],
+)
+
 export const repositoryClaims = sqliteTable('repository_claims', {
   rootId: integer('root_id').primaryKey(),
   userId: text('user_id')
@@ -164,6 +213,102 @@ export const uploads = sqliteTable(
   },
   (t) => [index('upload_submission').on(t.submissionId)],
 )
+export const transcripts = sqliteTable(
+  'transcripts',
+  {
+    id: text().primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    submissionId: text('submission_id').references(() => submissions.id),
+    harness: text().notNull(),
+    label: text().notNull(),
+    version: text().notNull().default(''),
+    model: text().notNull().default(''),
+    agent: text().notNull().default(''),
+    models: text({ mode: 'json' }).$type<string[]>().notNull().default([]),
+    usage: text({ mode: 'json' }).$type<SessionUsage>(),
+    name: text(),
+    format: text({ enum: ['md', 'txt', 'json', 'jsonl'] }),
+    key: text(),
+    sourceUrl: text('source_url'),
+    sha256: text(),
+    size: integer().notNull().default(0),
+    hiddenAt: integer('hidden_at'),
+    hiddenBy: text('hidden_by').references(() => users.id),
+    moderationReason: text('moderation_reason'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    index('transcript_submission').on(t.submissionId),
+    index('transcript_owner').on(t.userId, t.createdAt),
+  ],
+)
+
+export const agentConnections = sqliteTable(
+  'agent_connections',
+  {
+    id: text().primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    clientId: text('client_id').notNull(),
+    clientName: text('client_name').notNull(),
+    scopes: text({ mode: 'json' }).$type<string[]>().notNull(),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    revokedAt: integer('revoked_at'),
+    revision: integer().notNull().default(0),
+  },
+  (t) => [index('agent_connection_user').on(t.userId)],
+)
+
+export const submissionDrafts = sqliteTable(
+  'submission_drafts',
+  {
+    id: text().primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    connectionId: text('connection_id')
+      .notNull()
+      .references(() => agentConnections.id),
+    requestId: text('request_id').notNull(),
+    input: text({ mode: 'json' }).$type<SubmissionInput>().notNull(),
+    repoName: text('repo_name').notNull(),
+    commitSha: text('commit_sha').notNull(),
+    revision: integer().notNull().default(0),
+    rejectedAt: integer('rejected_at'),
+    submissionId: text('submission_id').references(() => submissions.id),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+  },
+  (t) => [
+    uniqueIndex('draft_request').on(t.connectionId, t.requestId),
+    index('draft_user').on(t.userId, t.createdAt),
+  ],
+)
+
+export const agentUploads = sqliteTable('agent_uploads', {
+  id: text().primaryKey(),
+  hash: text().notNull(),
+  connectionId: text('connection_id')
+    .notNull()
+    .references(() => agentConnections.id),
+  kind: text({ enum: ['screenshot', 'transcript'] }).notNull(),
+  name: text().notNull(),
+  metadata: text({ mode: 'json' }).$type<Record<string, unknown>>(),
+  usedAt: integer('used_at'),
+  resultId: text('result_id'),
+  expiresAt: integer('expires_at').notNull(),
+})
+
+export const requestLimits = sqliteTable('request_limits', {
+  key: text().primaryKey(),
+  count: integer().notNull(),
+  expiresAt: integer('expires_at').notNull(),
+})
+
 export const awards = sqliteTable(
   'awards',
   {
@@ -175,7 +320,7 @@ export const awards = sqliteTable(
       .references(() => users.id),
     challengeId: text('challenge_id').notNull(),
     amount: integer().notNull(),
-    status: text({ enum: ['active', 'held', 'revoked', 'transferred'] }).notNull(),
+    status: text({ enum: ['active', 'pending', 'held', 'revoked', 'transferred'] }).notNull(),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [index('award_user').on(t.userId, t.status)],
@@ -208,6 +353,7 @@ export const comments = sqliteTable(
     line: integer(),
     endLine: integer('end_line'),
     commitSha: text('commit_sha'),
+    requirementId: text('requirement_id'),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [index('comment_submission').on(t.submissionId, t.createdAt)],

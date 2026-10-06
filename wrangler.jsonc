@@ -1,12 +1,16 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "snowy-disk-3ef3",
-  "main": "@tanstack/react-start/server-entry",
+  "main": "src/server.ts",
   "compatibility_date": "2026-09-09",
-  "compatibility_flags": ["nodejs_compat"],
-  "observability": { "enabled": true },
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "observability": {
+    "enabled": true,
+  },
   "upload_source_maps": true,
-  "limits": { "cpu_ms": 60000 },
+  "limits": {
+    "cpu_ms": 60000,
+  },
   "d1_databases": [
     {
       "binding": "DB",
@@ -15,8 +19,29 @@
       "migrations_dir": "drizzle",
     },
   ],
-  "r2_buckets": [{ "binding": "ASSETS_BUCKET", "bucket_name": "emistry-assets" }],
+  "r2_buckets": [
+    {
+      "binding": "ASSETS_BUCKET",
+      "bucket_name": "emistry-assets",
+    },
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "f17c9b0ba0e34c97971003eac4da9f0f",
+    },
+  ],
+  "triggers": {
+    "crons": ["17 * * * *"],
+  },
   "workers_dev": true,
-  "routes": [{ "pattern": "shipforte.com", "custom_domain": true }],
-  "vars": { "APP_URL": "https://shipforte.com" },
+  "routes": [
+    {
+      "pattern": "shipforte.com",
+      "custom_domain": true,
+    },
+  ],
+  "vars": {
+    "APP_URL": "https://shipforte.com",
+  },
 }

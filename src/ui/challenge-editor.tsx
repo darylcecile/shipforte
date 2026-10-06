@@ -21,6 +21,8 @@ import type { ChallengeDetail } from './challenge-page'
 import { Markdown } from './markdown'
 import { ChallengeArchiveButton } from './challenge-archive-button'
 import { canEditChallenge, isPublishedChallenge } from '../domain/challenge-status'
+import { withRequirements, type Requirement } from '../domain/challenge-requirements'
+import { RequirementsEditor } from './requirements'
 
 export function ChallengeEditor({ id }: { id?: string }) {
   const { data: session } = useSession()
@@ -52,6 +54,9 @@ function EditorForm({ challenge }: { challenge?: Challenge }) {
   const [tier, setTier] = useState<Tier>(challenge?.tier || 'small')
   const [brief, setBrief] = useState(challenge?.brief || '')
   const [previewOpen, setPreviewOpen] = useState(false)
+  const [requirements, setRequirements] = useState<Requirement[]>(
+    challenge ? withRequirements(challenge).requirements : [],
+  )
   const { run, pending } = useAction()
   const navigate = useNavigate()
   return (
@@ -69,6 +74,7 @@ function EditorForm({ challenge }: { challenge?: Challenge }) {
             days: Number(f.get('days')),
             category: f.get('category'),
             tier,
+            requirements,
           },
           challenge && isPublishedChallenge(challenge.status)
             ? 'Challenge updated. Existing attempts keep their original terms.'
@@ -132,6 +138,12 @@ function EditorForm({ challenge }: { challenge?: Challenge }) {
             </div>
           )}
         </details>
+        <RequirementsEditor
+          value={requirements}
+          onChange={setRequirements}
+          brief={brief}
+          disabled={pending}
+        />
         <div className="grid gap-5 sm:grid-cols-2">
           <Field label="Category">
             <select className="field" name="category" defaultValue={challenge?.category || 'Tools'}>

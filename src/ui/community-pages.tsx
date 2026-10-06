@@ -26,6 +26,7 @@ import {
 } from './components'
 import { useAction, useSession } from './provider'
 import { useNow } from './components'
+import { PortfolioEditor, ShareShowcase } from './showcase'
 
 type People = Awaited<ReturnType<typeof people>>
 export function PeoplePage({ leaderboard = false }: { leaderboard?: boolean }) {
@@ -190,6 +191,14 @@ export function ProfilePage({ login }: { login: string }) {
             </a>
           </div>
         </div>
+        <div className="flex flex-wrap gap-2">
+          {session?.user?.id === p.id && <PortfolioEditor data={data} />}
+          <ShareShowcase
+            path={`/people/${p.login}`}
+            image={`/api/share/people/${p.login}.png`}
+            title={`${p.name} on Shipforte`}
+          />
+        </div>
         {session?.user && session.user.id !== p.id && p.githubId > 0 && (
           <button
             className="btn btn-secondary"
@@ -201,6 +210,16 @@ export function ProfilePage({ login }: { login: string }) {
           </button>
         )}
       </div>
+      {!!data.pinned.length && (
+        <section className="mb-10">
+          <h2 className="mb-5 text-xl font-semibold tracking-tight">Featured builds</h2>
+          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+            {data.pinned.map((item) => (
+              <SubmissionCard key={item.id} item={item} />
+            ))}
+          </div>
+        </section>
+      )}
       <h2 className="mb-5 text-xl font-semibold tracking-tight">A body of work.</h2>
       {data.submissions.length ? (
         <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">

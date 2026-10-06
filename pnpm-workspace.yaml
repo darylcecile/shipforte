@@ -4,3 +4,5 @@ allowBuilds:
   sharp: true
   workerd: true
   better-sqlite3: true
+minimumReleaseAgeExclude:
+  - '@cloudflare/workers-oauth-provider@1.2.0'

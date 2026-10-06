@@ -8,6 +8,27 @@
       "when": 1788995763995,
       "tag": "0000_motionless_saracen",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1790606295839,
+      "tag": "0001_stormy_famine",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790772862369,
+      "tag": "0002_handy_reptil",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1791328927187,
+      "tag": "0003_cloudy_thing",
+      "breakpoints": true
     }
   ]
 }

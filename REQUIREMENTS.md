@@ -23,6 +23,7 @@ repository submission still require verification with an authorized user account
 ## 2. Dashboard and challenges
 
 - [x] Provide a dashboard listing live challenges: app ideas users can build with or without AI.
+- [x] Keep challenges with a submitted attempt out of All challenges and the category tabs, and place them in a Completed tab in the same tab row. Search and size filters apply within the selected tab; completion is independent of kudos eligibility.
 - [x] Each challenge has a brief explaining what to build and a duration expressed in days ("build X in Y days").
 - [x] Show the challenge's kudos award before a user accepts it.
 - [x] The challenge maker selects a sizing tier that determines the full kudos award: small (50), medium (80), large (120), or xlarge (160).
@@ -53,10 +54,15 @@ repository submission still require verification with an authorized user account
 - [x] Other users can view submissions, their screenshots, and the submitted repository/commit details.
 - [x] Display the code from the submitted commit for platform-based code review.
 - [x] Preserve earlier submission versions when a user makes an eligible resubmission.
+- [x] Let users submit privately on Shipforte, preserving the immutable snapshot and original submission time. Only the owner can access private submissions and their attachments; exclude them from public feeds, counts, profiles, leaderboards, notifications to other users, and timelines on older versions.
+- [x] Withhold eligible kudos until the owner publishes. Evaluate timeliness using original submission time even if publication occurs after the deadline; late submissions remain ineligible. Reserve eligible repository/code claims on private submission to prevent reuse while awaiting publication.
+- [x] Allow only one-way private-to-public publication, with explicit owner confirmation. Public submissions cannot become private. Retain the existing public GitHub repository requirement; external repositories, demos, and transcript shares have independent visibility.
+- [x] Defer replacement archival and community notifications until publication. Require publishing a private submission before starting another attempt for that challenge. Keep redo kudos on hold until publication and honor moderator revocations of prior awards.
+- [x] Support private visibility in MCP drafts and show it in the mandatory review page. Let agents list their owner’s private submissions and request a publication review link, without bypassing browser approval.
 
 ## 4. Kudos and repeat attempts
 
-- [x] Award kudos when a user successfully submits the required project details and screenshots before their deadline.
+- [x] Award kudos for valid, on-time public submissions. For private submissions, reserve eligibility on submission and release kudos only on publication.
 - [x] Record the kudos awarded for each submission and reflect awards in the user's total.
 - [x] Prevent duplicate awards for the same submission.
 - [x] After a submission receives an award, block that repository from reuse across all challenges, except through a permitted redo or moderator-enabled resubmission of the original challenge.
@@ -70,10 +76,10 @@ repository submission still require verification with an authorized user account
 - [x] When the user starts an unlocked redo, start a fresh countdown for the challenge's full duration; unlocking eligibility alone does not start the clock.
 - [x] When offering a redo, show a notice before acceptance explaining that accepting removes the kudos already earned for that challenge, starts a fresh full-duration countdown, and requires a new valid submission before the new deadline to restore those kudos. State that missing the deadline leaves those kudos lost.
 - [x] When the user accepts a redo, remove the kudos they have already earned for that challenge from their total.
-- [x] Restore those kudos only when the user makes a new valid submission before the redo deadline; record the removal and restoration in the award history and submission timeline.
+- [x] Restore those kudos only for a new valid submission received before the redo deadline, withholding restoration until publication if submitted privately; record the removal and restoration in the award history and submission timeline.
 - [x] Record an improved resubmission at its own specific commit and link it to the previous submission.
 - [x] Treat the improved version as a new submission with fresh votes; votes belong to individual submissions and do not carry over.
-- [x] Archive and freeze the old submission when its replacement is submitted: disallow new votes and show the notice "This submission is archived. View the new submission", with a link to its replacement.
+- [x] Archive and freeze the old submission when its replacement becomes public: disallow new votes and show the notice "This submission is archived. View the new submission", with a link to its replacement.
 - [x] Allow moderators to enable resubmission without revoking existing kudos; permitting or starting this resubmission does not remove the user's existing award.
 - [x] Award new kudos for a valid, on-time moderator-enabled resubmission rather than restoring a previous award.
 - [x] Award the full challenge amount for a valid, on-time moderator-enabled resubmission when the previous submission and its award were revoked.
@@ -159,7 +165,36 @@ repository submission still require verification with an authorized user account
 - [x] Do not require a separate invitation-acceptance step.
 - [x] Receiving or viewing an invitation does not start the countdown; accepting the challenge does.
 
-## 11. Technical foundation
+## 11. Build-session transcripts and connected agents
+
+- [x] Allow optional build-session attachments on submissions: uploaded Markdown, TXT, JSON, or JSONL (up to 10 MB), pasted text, or HTTPS share links; up to ten sessions per submission version.
+- [x] Make attached transcripts public by default when the submission is published; keep unsubmitted uploads private to their owner.
+- [x] Allow moderators to hide and restore individual submitted transcripts, recording a reason and timeline event. Hidden transcripts and downloads remain available only to the author and moderators.
+- [x] Automatically identify the harness, session title, version, agent name, models, token usage, and reported USD cost from supported exports. Users attach the artifact or URL without filling out metadata fields. Missing metrics stay unreported; non-USD credits and multipliers are not treated as dollar amounts.
+- [x] Provide a conversation view for recognized structured records, a safe text/Markdown preview, and original downloads; treat external links as changeable references and transcripts as user-provided provenance.
+- [x] Offer a remote Streamable HTTP MCP server with OAuth/PKCE, consent, scoped Shipforte credentials, refresh, and revocable connections.
+- [x] Let connected agents read challenges and accepted attempts, discover accessible repositories, upload screenshots/transcripts, and prepare submission drafts.
+- [x] Require the signed-in owner to review the exact commit and attachments and click **Approve and submit** in Shipforte for every MCP submission. MCP tokens cannot invoke the browser approval endpoint.
+- [x] Reuse the existing submission service for repository access, snapshots, screenshots, reuse checks, deadlines, and kudos; record approval-request arrival as submission time.
+- [x] Reject stale commit previews and concurrent draft changes; finalize the draft and submission atomically and support idempotent draft preparation and approval retries.
+- [x] Show connected agents and drafts in the UI, notify owners of prepared drafts, and provide rejection and revocation controls.
+- [x] Expire drafts after seven days and connections after thirty days; clean abandoned transcript uploads and expired bookkeeping through an hourly trigger.
+- [ ] Verify end-to-end GitHub sign-in, MCP authorization/refresh, and project publication with authorized user accounts in the target harnesses.
+
+## 12. Structured requirements and project showcases
+
+- [x] Authors and moderators can create, reorder, edit, and remove required checklist items and optional stretch goals alongside the Markdown brief. Preserve the accepted checklist with each attempt.
+- [x] Interpret explicit requirement sections in legacy briefs when no structured checklist has been saved; use the original attempt brief for existing attempts. An intentionally empty checklist remains empty.
+- [x] Builders can report completion, notes, and attached screenshot evidence for each accepted requirement. Evidence is immutable with the submitted version and is labelled as builder-reported.
+- [x] Allow public feedback on individual requirements, anchored to the submitted attempt’s checklist, independently of general and inline code discussion.
+- [x] MCP returns structured challenge/attempt requirements and accepts evidence, demo recording links, and learning notes in reviewable submission drafts.
+- [x] Builders can pin and order up to three of their public, active submissions on their profile. Private, archived, and revoked submissions cannot be featured.
+- [x] Support HTTPS demo video or livestream recording links, with safe inline playback for YouTube, Vimeo, and Loom and external links for other services.
+- [x] Allow authors to edit showcase recording links and Markdown learning notes after submission, with a timeline record; preserve code, evidence, deadlines, and awards.
+- [x] Allow authors to select up to five captioned excerpts from attached transcript text or recognized messages. Read excerpts from the actual source and honor transcript moderation and submission privacy on every read.
+- [x] Provide public submission/profile share dialogs, downloadable 1200×630 PNG cards, and server-rendered Open Graph metadata. Private submissions have no social preview or public share image.
+
+## 13. Technical foundation
 
 - [x] Keep select dropdowns and single-line text inputs consistent in height and styling.
 

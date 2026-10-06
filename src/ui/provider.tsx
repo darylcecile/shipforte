@@ -49,7 +49,8 @@ export function useAction() {
     setPending(true)
     try {
       const result = await api<T>(path, body)
-      await client.invalidateQueries()
+      if (path === 'auth/logout') await client.resetQueries()
+      else await client.invalidateQueries()
       if (success) toast(success)
       return result
     } catch (error) {

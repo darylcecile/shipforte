@@ -1,5 +1,6 @@
-import { and, eq, gt, lt } from 'drizzle-orm'
-import { credentials, oauthStates, sessions, users } from '../db/schema'
+import { and, eq, gt, lt, sql } from 'drizzle-orm'
+import { agentConnections, credentials, oauthStates, sessions, users } from '../db/schema'
+import { safeReturnTo } from '../domain/agent-submissions'
 import { HttpError, requireUser, type Context } from './context'
 import { decrypt, digest, encrypt, randomToken } from './crypto'
 
@@ -91,15 +92,16 @@ export async function userToken(c: Context) {
 }
 export async function login(c: Context) {
   configured(c)
+  const returnTo = safeReturnTo(new URL(c.request.url).searchParams.get('returnTo'))
   if (new URL(c.request.url).origin !== c.env.APP_URL) {
-    return Response.redirect(`${c.env.APP_URL}/api/auth/login`, 302)
+    return Response.redirect(`${c.env.APP_URL}/api/auth/login?returnTo=${encodeURIComponent(returnTo)}`, 302)
   }
   const state = randomToken()
   const verifier = randomToken()
   await c.db.delete(oauthStates).where(lt(oauthStates.expiresAt, Date.now()))
   await c.db
     .insert(oauthStates)
-    .values({ hash: await digest(state), verifier, expiresAt: Date.now() + 600_000 })
+    .values({ hash: await digest(state), verifier, expiresAt: Date.now() + 600_000, returnTo })
   const url = new URL('https://github.com/login/oauth/authorize')
   url.search = new URLSearchParams({
     client_id: c.env.GITHUB_CLIENT_ID,
@@ -160,7 +162,7 @@ export async function callback(c: Context) {
   await c.db
     .insert(sessions)
     .values({ hash: await digest(session), userId, expiresAt: Date.now() + sessionAge * 1000 })
-  const headers = new Headers({ Location: '/' })
+  const headers = new Headers({ Location: safeReturnTo(stored.returnTo) })
   headers.append('Set-Cookie', cookie(c, 'shipforte_session', session, sessionAge))
   headers.append('Set-Cookie', cookie(c, 'shipforte_oauth', '', 0))
   return new Response(null, { status: 302, headers })
@@ -206,6 +208,10 @@ export async function webhook(c: Context) {
       await c.db.batch([
         c.db.delete(credentials).where(eq(credentials.userId, user.id)),
         c.db.delete(sessions).where(eq(sessions.userId, user.id)),
+        c.db
+          .update(agentConnections)
+          .set({ revokedAt: Date.now(), revision: sql`${agentConnections.revision} + 1` })
+          .where(eq(agentConnections.userId, user.id)),
       ])
   }
   return { ok: true }

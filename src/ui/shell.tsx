@@ -1,6 +1,7 @@
 import { Link, useRouterState } from '@tanstack/react-router'
 import {
   Bell,
+  Bot,
   Compass,
   Github,
   Hammer,
@@ -25,6 +26,7 @@ export function Shell({ children }: { children: ReactNode }) {
     { to: '/leaderboard', label: 'Leaderboard', icon: Trophy },
     { to: '/people', label: 'Community', icon: Users },
     { to: '/notifications', label: 'Notifications', icon: Bell },
+    { to: '/agents', label: 'Connected agents', icon: Bot },
   ]
   return (
     <div className="min-h-dvh lg:pl-60">

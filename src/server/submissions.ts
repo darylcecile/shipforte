@@ -1,7 +1,8 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { z } from 'zod'
 import { attempts, awards, repositoryClaims, submissions, uploads, users } from '../db/schema'
 import { copiedFiles, onTime } from '../domain/rules'
+import { eligibleKudos, releasedKudos } from '../domain/submission-visibility'
 import {
   atomic,
   ensure,
@@ -17,17 +18,12 @@ import {
 } from './context'
 import { defaultBranchCommit, verifiedRepository } from './github'
 import { loadManifest, snapshot, type Manifest } from './snapshots'
+import { submissionInput, type SubmissionInput } from '../domain/agent-submissions'
+import { validateTranscripts } from './transcripts'
+import { publicSubmission, readSubmission } from './submission-access'
+import { awardActivity, claimRepository, heldKudos, publicationActivity } from './submission-awards'
+import { validateEvidence, withRequirements } from '../domain/challenge-requirements'
 
-const submissionInput = z.object({
-  attemptId: z.string().uuid(),
-  repoId: z.number().int().positive(),
-  title: z.string().trim().min(3).max(120),
-  description: z.string().trim().min(20).max(10_000),
-  demoUrl: z
-    .union([z.literal(''), z.url().refine((s) => s.startsWith('https://'), 'Demo links must use HTTPS.')])
-    .optional(),
-  screenshots: z.array(z.string().uuid()).min(1).max(20),
-})
 async function checkReuse(
   c: Context,
   root: number,
@@ -44,7 +40,10 @@ async function checkReuse(
   if (attempt.kind === 'repeat' && previous?.repoRoot === root)
     throw new HttpError(400, 'A repeat attempt requires a new repository. Forks count as reuse.')
   if (claim && !(exception && claim.userId === attempt.userId && claim.challengeId === attempt.challengeId)) {
-    throw new HttpError(409, 'This repository or its fork has already earned kudos and cannot be reused.')
+    throw new HttpError(
+      409,
+      'This repository or its fork has already been claimed for kudos and cannot be reused.',
+    )
   }
   const matching = await stmt(
     c,
@@ -52,7 +51,7 @@ async function checkReuse(
     manifest.fingerprint,
   ).first<{ root_id: number }>()
   if (matching && !(exception && matching.root_id === root))
-    throw new HttpError(409, 'This code is a copy of a repository that has already earned kudos.')
+    throw new HttpError(409, 'This code is a copy of a repository already claimed for kudos.')
   if (previous && attempt.kind === 'repeat' && previous.fingerprint === manifest.fingerprint)
     throw new HttpError(409, 'A copied repository does not qualify as a new attempt.')
   if (!manifest.codeHashes.length) return
@@ -69,15 +68,37 @@ async function checkReuse(
   if (copied)
     throw new HttpError(
       409,
-      'This implementation substantially copies an awarded repository. Contact a moderator if you believe this is incorrect.',
+      'This implementation substantially copies a repository already claimed for kudos. Contact a moderator if you believe this is incorrect.',
     )
 }
 export async function submitProject(c: Context) {
+  return createSubmission(c, submissionInput.parse(await c.request.json()))
+}
+export async function validateSubmissionAttachments(c: Context, input: SubmissionInput) {
+  const user = requireUser(c)
+  const images = await c.db.select().from(uploads).where(inArray(uploads.id, input.screenshots))
+  if (
+    images.length !== input.screenshots.length ||
+    images.some((i) => i.userId !== user.id || i.submissionId)
+  )
+    throw new HttpError(400, 'Upload at least one new screenshot for this submission.')
+  return {
+    images: images.map((i) => ({ id: i.id, name: i.name })),
+    transcripts: await validateTranscripts(c, input.transcripts),
+  }
+}
+// Both transports use this service. Only browser-authenticated code calls it for an MCP draft.
+export async function createSubmission(
+  c: Context,
+  input: SubmissionInput,
+  review?: {
+    commitSha: string
+    draftId: string
+    guards: Guard[]
+  },
+) {
   const receivedAt = c.receivedAt
   const user = requireUser(c)
-  const input = submissionInput.parse(await c.request.json())
-  if (new Set(input.screenshots).size !== input.screenshots.length)
-    throw new HttpError(400, 'Each screenshot must be unique.')
   const attempt = ensure(
     await c.db
       .select()
@@ -86,14 +107,19 @@ export async function submitProject(c: Context) {
       .get(),
   )
   if (attempt.submittedAt) throw new HttpError(409, 'This attempt has already been submitted.')
-  const images = await c.db.select().from(uploads).where(inArray(uploads.id, input.screenshots))
-  if (
-    images.length !== input.screenshots.length ||
-    images.some((i) => i.userId !== user.id || i.submissionId)
-  )
-    throw new HttpError(400, 'Upload at least one new screenshot for this submission.')
+  try {
+    validateEvidence(withRequirements(attempt).requirements, input.evidence, input.screenshots)
+  } catch (error) {
+    throw new HttpError(400, error instanceof Error ? error.message : 'Invalid requirement evidence.')
+  }
+  await validateSubmissionAttachments(c, input)
   const { repo, token, publicRead } = await verifiedRepository(c, input.repoId)
   const commit = await defaultBranchCommit(token, repo, publicRead)
+  if (review && commit.sha !== review.commitSha)
+    throw new HttpError(
+      409,
+      'The default branch changed. Refresh the commit preview and review it before submitting.',
+    )
   const root = repo.source?.id ?? repo.id
   const previous = attempt.previousId
     ? ensure(await c.db.select().from(submissions).where(eq(submissions.id, attempt.previousId)).get())
@@ -108,26 +134,16 @@ export async function submitProject(c: Context) {
     httpMetadata: { contentType: 'application/json' },
   })
   const timely = onTime(receivedAt, attempt.deadline)
-  const heldAwards =
-    attempt.kind === 'redo' && attempt.restoreIds.length
-      ? await c.db
-          .select()
-          .from(awards)
-          .where(
-            and(
-              sql`${awards.submissionId} IN (SELECT value FROM json_each(${JSON.stringify(attempt.restoreIds)}))`,
-              eq(awards.status, 'held'),
-            ),
-          )
-      : []
-  const available = attempt.kind === 'redo' ? heldAwards.reduce((sum, a) => sum + a.amount, 0) : attempt.award
-  const earned = timely ? available : 0
-  const guards: Guard[] = [userGuard(user)]
+  const available = attempt.kind === 'redo' ? await heldKudos(c, attempt) : attempt.award
+  const eligible = eligibleKudos(receivedAt, attempt.deadline, available)
+  const isPrivate = input.visibility === 'private'
+  const earned = isPrivate ? 0 : eligible
+  const guards: Guard[] = [userGuard(user), ...(review?.guards ?? [])]
   if (previous) guards.push({ table: 'submissions', id: previous.id, revision: previous.revision })
   const writes = [
     stmt(
       c,
-      'INSERT INTO submissions(id,attempt_id,user_id,challenge_id,title,description,demo_url,repo_id,repo_name,repo_root,commit_sha,manifest_key,fingerprint,previous_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO submissions(id,attempt_id,user_id,challenge_id,title,description,demo_url,repo_id,repo_name,repo_root,commit_sha,manifest_key,fingerprint,previous_id,created_at,visibility,published_at,evidence,video_url,learnings) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       id,
       attempt.id,
       user.id,
@@ -143,6 +159,11 @@ export async function submitProject(c: Context) {
       manifest.fingerprint,
       previous?.id ?? null,
       receivedAt,
+      input.visibility,
+      isPrivate ? null : receivedAt,
+      JSON.stringify(input.evidence),
+      input.videoUrl,
+      input.learnings,
     ),
     stmt(c, 'UPDATE attempts SET submitted_at=? WHERE id=?', receivedAt, attempt.id),
     stmt(
@@ -156,82 +177,51 @@ export async function submitProject(c: Context) {
       user.id,
       attempt.challengeId,
       'submitted',
-      `Submitted “${input.title}” at ${commit.sha.slice(0, 7)}. ${timely ? 'Before the deadline.' : 'After the deadline; no kudos awarded.'}`,
+      `Submitted ${isPrivate ? 'privately ' : ''}“${input.title}” at ${commit.sha.slice(0, 7)}. ${timely ? 'Before the deadline.' : 'After the deadline; no kudos awarded.'}${isPrivate && eligible ? ` ${eligible} kudos withheld until publication.` : ''}`,
       id,
-    ),
-    stmt(
-      c,
-      `INSERT INTO notifications(id,user_id,title,body,href,challenge_id,subject_id,submission_id,created_at)
-      SELECT lower(hex(randomblob(16))),sender_id,?,?,?,?,recipient_id,?,? FROM invitations WHERE recipient_id=? AND challenge_id=?`,
-      `${user.login} submitted a project`,
-      input.title,
-      `/submissions/${id}`,
-      attempt.challengeId,
-      id,
-      receivedAt,
-      user.id,
-      attempt.challengeId,
     ),
   ]
-  if (previous)
-    writes.push(stmt(c, 'UPDATE submissions SET archived=1,replacement_id=? WHERE id=?', id, previous.id))
-  if (earned > 0) {
+  if (input.transcripts.length)
     writes.push(
       stmt(
         c,
-        "INSERT INTO awards(submission_id,user_id,challenge_id,amount,status,created_at) VALUES(?,?,?,?,'active',?)",
+        'UPDATE transcripts SET submission_id=? WHERE id IN (SELECT value FROM json_each(?))',
         id,
-        user.id,
-        attempt.challengeId,
-        earned,
-        receivedAt,
-      ),
-      event(
-        c,
-        user.id,
-        attempt.challengeId,
-        attempt.kind === 'redo' ? 'kudos_restored' : 'kudos_awarded',
-        `${earned} kudos ${attempt.kind === 'redo' ? 'restored' : 'awarded'}.`,
-        id,
-      ),
-      notify(
-        c,
-        user.id,
-        `${earned} kudos ${attempt.kind === 'redo' ? 'restored' : 'earned'}`,
-        `Your submission for ${attempt.title} arrived on time.`,
-        `/submissions/${id}`,
-        attempt.challengeId,
-        user.id,
-        id,
-      ),
-      stmt(
-        c,
-        'INSERT INTO repository_claims(root_id,user_id,challenge_id) VALUES(?,?,?) ON CONFLICT(root_id) DO UPDATE SET user_id=CASE WHEN user_id=excluded.user_id AND challenge_id=excluded.challenge_id THEN user_id ELSE NULL END',
-        root,
-        user.id,
-        attempt.challengeId,
-      ),
-      stmt(
-        c,
-        'INSERT INTO fingerprints(fingerprint,root_id) VALUES(?,?) ON CONFLICT(fingerprint) DO UPDATE SET root_id=CASE WHEN root_id=excluded.root_id THEN root_id ELSE NULL END',
-        manifest.fingerprint,
-        root,
-      ),
-      stmt(
-        c,
-        'INSERT OR IGNORE INTO file_claims(hash,root_id) SELECT value,? FROM json_each(?)',
-        root,
-        JSON.stringify(manifest.codeHashes),
+        JSON.stringify(input.transcripts),
       ),
     )
-    if (attempt.kind === 'redo')
-      writes.push(
-        stmt(
-          c,
-          "UPDATE awards SET status='transferred' WHERE status='held' AND submission_id IN (SELECT value FROM json_each(?))",
-          JSON.stringify(attempt.restoreIds),
-        ),
-      )
+  if (review)
+    writes.push(stmt(c, 'UPDATE submission_drafts SET submission_id=? WHERE id=?', id, review.draftId))
+  if (!isPrivate)
+    writes.push(
+      ...publicationActivity(
+        c,
+        {
+          id,
+          title: input.title,
+          userId: user.id,
+          login: user.login,
+          challengeId: attempt.challengeId,
+          previousId: previous?.id ?? null,
+        },
+        receivedAt,
+      ),
+    )
+  if (eligible > 0) {
+    writes.push(
+      stmt(
+        c,
+        'INSERT INTO awards(submission_id,user_id,challenge_id,amount,status,created_at) VALUES(?,?,?,?,?,?)',
+        id,
+        user.id,
+        attempt.challengeId,
+        eligible,
+        isPrivate ? 'pending' : 'active',
+        receivedAt,
+      ),
+      ...claimRepository(c, attempt, root, manifest),
+    )
+    if (!isPrivate) writes.push(...awardActivity(c, attempt, id, earned))
   }
   try {
     await atomic(c, guards, writes)
@@ -239,7 +229,62 @@ export async function submitProject(c: Context) {
     await c.env.ASSETS_BUCKET.delete(manifestKey)
     throw error
   }
-  return { id, earned, onTime: timely }
+  return { id, earned, withheld: isPrivate ? eligible : 0, visibility: input.visibility, onTime: timely }
+}
+export async function publishSubmission(c: Context, id: string) {
+  const user = requireUser(c)
+  const row = ensure(
+    await c.db
+      .select()
+      .from(submissions)
+      .where(and(eq(submissions.id, id), eq(submissions.userId, user.id)))
+      .get(),
+  )
+  if (row.visibility === 'public') return { id, visibility: 'public', alreadyPublished: true }
+  const { revision } = z
+    .object({ revision: z.number().int().nonnegative(), visibility: z.literal('public') })
+    .strict()
+    .parse(await c.request.json())
+  if (revision !== row.revision)
+    throw new HttpError(409, 'This submission changed. Refresh and review it again.')
+  const attempt = ensure(await c.db.select().from(attempts).where(eq(attempts.id, row.attemptId)).get())
+  const award = await c.db.select().from(awards).where(eq(awards.submissionId, id)).get()
+  const earned =
+    award?.status === 'pending' && !row.revoked
+      ? eligibleKudos(
+          row.createdAt,
+          attempt.deadline,
+          releasedKudos(award.amount, attempt.kind, await heldKudos(c, attempt)),
+        )
+      : 0
+  const previous = row.previousId ? await readSubmission(c, row.previousId) : null
+  const now = Date.now()
+  const guards: Guard[] = [userGuard(user), { table: 'submissions', id, revision: row.revision }]
+  if (previous) guards.push({ table: 'submissions', id: previous.id, revision: previous.revision })
+  const writes = [
+    stmt(c, "UPDATE submissions SET visibility='public',published_at=? WHERE id=?", now, id),
+    event(
+      c,
+      user.id,
+      row.challengeId,
+      'published',
+      `Published “${row.title}”. Deadline eligibility uses the original submission time.`,
+      id,
+    ),
+    ...publicationActivity(c, { ...row, login: user.login }, now),
+    ...awardActivity(c, attempt, id, earned),
+  ]
+  if (award?.status === 'pending')
+    writes.push(
+      stmt(
+        c,
+        "UPDATE awards SET status='active',amount=? WHERE submission_id=? AND status='pending'",
+        earned,
+        id,
+      ),
+    )
+  await atomic(c, guards, writes)
+  return { id, earned, visibility: 'public', alreadyPublished: false }
 }
 export async function moderateSubmission(c: Context, id: string) {
   const moderator = requireModerator(c)
@@ -250,7 +295,7 @@ export async function moderateSubmission(c: Context, id: string) {
       allowResubmission: z.boolean().default(false),
     })
     .parse(await c.request.json())
-  const row = ensure(await c.db.select().from(submissions).where(eq(submissions.id, id)).get())
+  const row = await publicSubmission(c, id)
   if (row.archived && input.action === 'allow')
     throw new HttpError(400, 'Allow resubmission on the latest version instead.')
   const owner = ensure(await c.db.select().from(users).where(eq(users.id, row.userId)).get())
@@ -280,6 +325,16 @@ export async function moderateSubmission(c: Context, id: string) {
         `UPDATE attempts SET award=COALESCE((SELECT SUM(amount) FROM awards
         WHERE status='held' AND submission_id IN (SELECT value FROM json_each(attempts.restore_ids))),0)
         WHERE user_id=? AND kind='redo' AND submitted_at IS NULL`,
+        owner.id,
+      ),
+      stmt(
+        c,
+        `UPDATE awards SET amount=MIN(amount,COALESCE((SELECT SUM(source.amount) FROM awards source
+        WHERE source.status='held' AND source.submission_id IN (SELECT value FROM json_each(
+          (SELECT a.restore_ids FROM attempts a JOIN submissions s ON s.attempt_id=a.id WHERE s.id=awards.submission_id)
+        ))),0)) WHERE user_id=? AND status='pending' AND submission_id IN (
+          SELECT s.id FROM submissions s JOIN attempts a ON a.id=s.attempt_id WHERE a.kind='redo'
+        )`,
         owner.id,
       ),
       notify(
@@ -313,7 +368,7 @@ export async function moderateSubmission(c: Context, id: string) {
   return { ok: true }
 }
 export async function snapshotFile(c: Context, id: string) {
-  const row = ensure(await c.db.select().from(submissions).where(eq(submissions.id, id)).get())
+  const row = await readSubmission(c, id)
   const manifest = await loadManifest(c, row.manifestKey)
   const path = new URL(c.request.url).searchParams.get('path')
   if (!path) return { files: manifest.files }

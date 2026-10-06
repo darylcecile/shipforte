@@ -19,6 +19,9 @@ import { useData } from './api'
 import { Avatar, date, Empty, ErrorState, Field, Loading, Modal, PageTitle } from './components'
 import { useAction, useSession } from './provider'
 import { Markdown } from './markdown'
+import { SubmissionTranscripts } from './transcripts'
+import { SubmissionRequirements } from './submission-requirements'
+import { ShareShowcase, ShowcaseEditor, ShowcaseStory } from './showcase'
 
 const CodeReview = lazy(createClientOnlyFn(() => import('./code-review')))
 export type SubmissionDetail = Awaited<ReturnType<typeof submissionDetail>>
@@ -29,6 +32,7 @@ export function SubmissionPage({ id }: { id: string }) {
   const [tab, setTab] = useState('overview')
   const { run, pending } = useAction()
   const [reviewOpen, setReviewOpen] = useState(false)
+  const [publishOpen, setPublishOpen] = useState(false)
   if (error) return <ErrorState error={error} retry={refetch} />
   if (!data) return <Loading />
   const { submission: s, attempt, images, timeline } = data
@@ -44,6 +48,25 @@ export function SubmissionPage({ id }: { id: string }) {
         <ArrowLeft size={14} />
         {s.challengeTitle}
       </Link>
+      {s.visibility === 'private' && (
+        <section className="mb-6 rounded-xl border border-line bg-sage p-5">
+          <h2 className="font-semibold">Private submission · only you can view it</h2>
+          <p className="mt-2 text-sm leading-6">
+            Your submission time and this exact snapshot are saved.{' '}
+            {s.withheldKudos
+              ? `Up to ${s.withheldKudos} kudos are withheld until you publish.`
+              : 'This submission has no kudos awaiting publication.'}{' '}
+            Publishing later won’t change deadline eligibility.
+          </p>
+          <p className="mt-2 text-xs leading-5 text-muted">
+            Your GitHub repository and external demo or transcript links keep their own visibility.
+            Publication on Shipforte is permanent.
+          </p>
+          <button type="button" className="btn btn-primary mt-4" onClick={() => setPublishOpen(true)}>
+            Publish submission
+          </button>
+        </section>
+      )}
       {s.archived && (
         <div className="mb-6 rounded-xl border border-line bg-white p-4 text-sm">
           This submission is archived.{' '}
@@ -70,13 +93,21 @@ export function SubmissionPage({ id }: { id: string }) {
         eyebrow="From the workbench"
         title={s.title}
         action={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            {session?.user?.id === s.userId && <ShowcaseEditor data={data} />}
+            {s.visibility === 'public' && (
+              <ShareShowcase
+                path={`/submissions/${id}`}
+                image={`/api/share/submissions/${id}.png`}
+                title={s.title}
+              />
+            )}
             {s.demoUrl && (
               <a href={s.demoUrl} target="_blank" rel="noreferrer" className="btn btn-primary">
                 Try the demo <ArrowUpRight size={16} />
               </a>
             )}
-            {session?.user?.moderator && (
+            {session?.user?.moderator && s.visibility === 'public' && (
               <button className="btn btn-secondary" onClick={() => setReviewOpen(true)}>
                 <ShieldCheck size={16} />
                 Review
@@ -95,6 +126,7 @@ export function SubmissionPage({ id }: { id: string }) {
           {s.login}
         </Link>
         <span>Submitted {date(s.createdAt)}</span>
+        {s.publishedAt && s.publishedAt !== s.createdAt && <span>Published {date(s.publishedAt)}</span>}
         <span className="rounded-md bg-sage px-2 py-1 font-semibold text-green-900">✳ {s.kudos} kudos</span>
         <span className="flex items-center gap-1">
           {s.createdAt < attempt.deadline ? <Check size={14} /> : <Clock3 size={14} />}
@@ -137,17 +169,22 @@ export function SubmissionPage({ id }: { id: string }) {
                   </div>
                 </details>
               </div>
-              <section className="mt-8">
-                <h2 className="mb-5 text-xl font-semibold tracking-tight">The conversation</h2>
-                <div className="space-y-4">
-                  {data.comments
-                    .filter((c) => !c.file)
-                    .map((c) => (
-                      <CommentCard key={c.id} comment={c} />
-                    ))}
-                </div>
-                <CommentForm submissionId={id} />
-              </section>
+              <SubmissionRequirements data={data} />
+              <ShowcaseStory data={data} owner={session?.user?.id === s.userId} />
+              <SubmissionTranscripts items={data.transcripts} />
+              {s.visibility === 'public' && (
+                <section className="mt-8">
+                  <h2 className="mb-5 text-xl font-semibold tracking-tight">The conversation</h2>
+                  <div className="space-y-4">
+                    {data.comments
+                      .filter((c) => !c.file && !c.requirementId)
+                      .map((c) => (
+                        <CommentCard key={c.id} comment={c} />
+                      ))}
+                  </div>
+                  <CommentForm submissionId={id} />
+                </section>
+              )}
             </>
           )}
           {tab === 'code' && (
@@ -190,61 +227,63 @@ export function SubmissionPage({ id }: { id: string }) {
           )}
         </div>
         <aside className="space-y-5 xl:sticky xl:top-24">
-          <div className="panel p-5">
-            <p className="eyebrow">What do you think?</p>
-            <p className="mt-3 text-3xl font-semibold tabular-nums">
-              {s.up - s.down}
-              <span className="ml-2 text-xs font-normal text-muted">community score</span>
-            </p>
-            <div className="mt-5 grid grid-cols-3 gap-2">
-              {(
-                [
-                  { value: 'up', label: 'Upvote', icon: ArrowUp, count: s.up },
-                  { value: 'down', label: 'Downvote', icon: ArrowDown, count: s.down },
-                  { value: 'redo', label: 'Redo', icon: RotateCcw, count: s.redo },
-                ] as const
-              ).map((v) => (
-                <button
-                  key={v.value}
-                  disabled={voteDisabled}
-                  aria-pressed={data.myVote === v.value}
-                  onClick={() =>
-                    run(`submissions/${id}/vote`, { value: data.myVote === v.value ? null : v.value })
-                  }
-                  className={`flex flex-col items-center gap-1.5 rounded-lg border p-3 text-xs disabled:cursor-not-allowed ${data.myVote === v.value ? 'border-accent bg-accent-soft text-accent' : 'border-line hover:bg-canvas'}`}
+          {s.visibility === 'public' && (
+            <div className="panel p-5">
+              <p className="eyebrow">What do you think?</p>
+              <p className="mt-3 text-3xl font-semibold tabular-nums">
+                {s.up - s.down}
+                <span className="ml-2 text-xs font-normal text-muted">community score</span>
+              </p>
+              <div className="mt-5 grid grid-cols-3 gap-2">
+                {(
+                  [
+                    { value: 'up', label: 'Upvote', icon: ArrowUp, count: s.up },
+                    { value: 'down', label: 'Downvote', icon: ArrowDown, count: s.down },
+                    { value: 'redo', label: 'Redo', icon: RotateCcw, count: s.redo },
+                  ] as const
+                ).map((v) => (
+                  <button
+                    key={v.value}
+                    disabled={voteDisabled}
+                    aria-pressed={data.myVote === v.value}
+                    onClick={() =>
+                      run(`submissions/${id}/vote`, { value: data.myVote === v.value ? null : v.value })
+                    }
+                    className={`flex flex-col items-center gap-1.5 rounded-lg border p-3 text-xs disabled:cursor-not-allowed ${data.myVote === v.value ? 'border-accent bg-accent-soft text-accent' : 'border-line hover:bg-canvas'}`}
+                  >
+                    <v.icon size={17} />
+                    <span className="font-semibold tabular-nums">{v.count}</span>
+                    <span className="text-[10px]">{v.label}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="mt-4 text-xs leading-5 text-muted">
+                {session?.user?.id === s.userId
+                  ? 'Your community votes. You focus on building.'
+                  : !session?.user
+                    ? 'Connect GitHub to vote and leave feedback.'
+                    : 'One vote, your call. Click again to remove it.'}
+              </p>
+              <div className="mt-5 border-t border-line pt-4">
+                <p className="text-xs font-medium">
+                  {s.redoUnlocked ? '↻ Redo opportunity unlocked' : 'Room to improve?'}
+                </p>
+                <p className="mt-2 text-xs leading-5 text-muted">
+                  {total ? Math.round((s.redo / total) * 100) : 0}% redo · {total}/30 minimum voters. A redo
+                  unlocks at 25% with at least 30 voters.
+                </p>
+              </div>
+              {session?.user?.id === s.userId && !s.archived && (s.redoUnlocked || s.moderatorAllowed) && (
+                <Link
+                  to="/challenges/$id"
+                  params={{ id: s.challengeId }}
+                  className="btn btn-secondary mt-4 w-full"
                 >
-                  <v.icon size={17} />
-                  <span className="font-semibold tabular-nums">{v.count}</span>
-                  <span className="text-[10px]">{v.label}</span>
-                </button>
-              ))}
+                  Review resubmission options
+                </Link>
+              )}
             </div>
-            <p className="mt-4 text-xs leading-5 text-muted">
-              {session?.user?.id === s.userId
-                ? 'Your community votes. You focus on building.'
-                : !session?.user
-                  ? 'Connect GitHub to vote and leave feedback.'
-                  : 'One vote, your call. Click again to remove it.'}
-            </p>
-            <div className="mt-5 border-t border-line pt-4">
-              <p className="text-xs font-medium">
-                {s.redoUnlocked ? '↻ Redo opportunity unlocked' : 'Room to improve?'}
-              </p>
-              <p className="mt-2 text-xs leading-5 text-muted">
-                {total ? Math.round((s.redo / total) * 100) : 0}% redo · {total}/30 minimum voters. A redo
-                unlocks at 25% with at least 30 voters.
-              </p>
-            </div>
-            {session?.user?.id === s.userId && !s.archived && (s.redoUnlocked || s.moderatorAllowed) && (
-              <Link
-                to="/challenges/$id"
-                params={{ id: s.challengeId }}
-                className="btn btn-secondary mt-4 w-full"
-              >
-                Review resubmission options
-              </Link>
-            )}
-          </div>
+          )}
           <div className="panel p-5">
             <p className="eyebrow mb-4">Saved in time</p>
             <a
@@ -277,6 +316,29 @@ export function SubmissionPage({ id }: { id: string }) {
         </aside>
       </div>
       <ModerationDialog id={id} open={reviewOpen} onClose={() => setReviewOpen(false)} />
+      <Modal title="Publish this submission?" open={publishOpen} onClose={() => setPublishOpen(false)}>
+        <p className="text-sm leading-6">
+          This makes “{s.title}”, its saved code, screenshots, and build sessions visible to everyone. You
+          cannot make it private again. Eligible kudos will be released using the original submission time.
+        </p>
+        <button
+          type="button"
+          className="btn btn-primary mt-5 w-full"
+          disabled={pending}
+          onClick={async () => {
+            if (
+              await run(
+                `submissions/${id}/publish`,
+                { revision: s.revision, visibility: 'public' },
+                'Your submission is now public.',
+              )
+            )
+              setPublishOpen(false)
+          }}
+        >
+          {pending ? 'Publishing…' : 'Publish permanently'}
+        </button>
+      </Modal>
     </>
   )
 }
@@ -345,12 +407,14 @@ export function CommentForm({
   file = null,
   line = null,
   endLine = null,
+  requirementId = null,
   onDone,
 }: {
   submissionId: string
   file?: string | null
   line?: number | null
   endLine?: number | null
+  requirementId?: string | null
   onDone?: () => void
 }) {
   const { data } = useSession()
@@ -371,23 +435,29 @@ export function CommentForm({
       onSubmit={async (e) => {
         e.preventDefault()
         if (
-          await run(`submissions/${submissionId}/comments`, { body, file, line, endLine }, 'Feedback posted.')
+          await run(
+            `submissions/${submissionId}/comments`,
+            { body, file, line, endLine, requirementId },
+            'Feedback posted.',
+          )
         ) {
           setBody('')
           onDone?.()
         }
       }}
     >
-      <label className="sr-only" htmlFor={`comment-${file || 'discussion'}`}>
+      <label className="sr-only" htmlFor={`comment-${file || requirementId || 'discussion'}`}>
         Your feedback
       </label>
       <textarea
-        id={`comment-${file || 'discussion'}`}
+        id={`comment-${file || requirementId || 'discussion'}`}
         className="field min-h-24"
         placeholder={
-          file
-            ? 'Leave thoughtful feedback on this code…'
-            : 'Ask a question, share an idea, or give a little encouragement…'
+          requirementId
+            ? 'What works well or could improve for this requirement?'
+            : file
+              ? 'Leave thoughtful feedback on this code…'
+              : 'Ask a question, share an idea, or give a little encouragement…'
         }
         required
         maxLength={5000}

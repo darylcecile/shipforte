@@ -8,6 +8,7 @@ import { screenshotType } from '../domain/rules'
 import { githubResponse } from './github'
 import { digest } from './crypto'
 import { ensure, HttpError, limitedBody, requireUser, type Context } from './context'
+import { readSubmission } from './submission-access'
 
 export interface SnapshotFile {
   path: string
@@ -142,7 +143,7 @@ export async function loadManifest(c: Context, key: string) {
   return stored.json<Manifest>()
 }
 export async function uploadScreenshot(c: Context) {
-  const user = requireUser(c)
+  requireUser(c)
   const max = 10 * 1024 * 1024
   if (Number(c.request.headers.get('Content-Length')) > max + 4096)
     throw new HttpError(413, 'Screenshots must be 10 MB or smaller.')
@@ -152,6 +153,12 @@ export async function uploadScreenshot(c: Context) {
   }).formData()
   const file = body.get('file')
   if (!(file instanceof File) || !file.size || file.size > max)
+    throw new HttpError(400, 'Choose a PNG, JPEG, or WebP image up to 10 MB.')
+  return saveScreenshot(c, file)
+}
+export async function saveScreenshot(c: Context, file: File) {
+  const user = requireUser(c)
+  if (!file.size || file.size > 10 * 1024 * 1024)
     throw new HttpError(400, 'Choose a PNG, JPEG, or WebP image up to 10 MB.')
   const bytes = new Uint8Array(await file.arrayBuffer())
   const mime = screenshotType(bytes)
@@ -178,11 +185,13 @@ export async function uploadScreenshot(c: Context) {
 export async function image(c: Context, id: string) {
   const row = ensure(await c.db.select().from(uploads).where(eq(uploads.id, id)).get())
   if (!row.submissionId && c.user?.id !== row.userId) throw new HttpError(404, 'Image not found.')
+  const submission = row.submissionId ? await readSubmission(c, row.submissionId) : null
   const stored = ensure(await c.env.ASSETS_BUCKET.get(row.key))
   return new Response(stored.body, {
     headers: {
       'Content-Type': row.mime,
-      'Cache-Control': row.submissionId ? 'public, max-age=31536000, immutable' : 'private, no-store',
+      'Cache-Control':
+        submission?.visibility === 'public' ? 'public, max-age=31536000, immutable' : 'private, no-store',
       'X-Content-Type-Options': 'nosniff',
     },
   })

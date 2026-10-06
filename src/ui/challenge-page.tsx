@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router'
-import { ArrowLeft, ArrowUpRight, Clock3, Github, Pencil, Plus, Trophy, UserPlus } from 'lucide-react'
+import { ArrowLeft, ArrowUpRight, Clock3, Copy, Github, Pencil, Plus, Trophy, UserPlus } from 'lucide-react'
 import { useState } from 'react'
 import type { challengeDetail, people } from '../server/queries'
 import { repeatAward } from '../domain/rules'
@@ -21,6 +21,7 @@ import { SubmissionForm } from './submission-form'
 import { Markdown } from './markdown'
 import { ChallengeArchiveButton } from './challenge-archive-button'
 import { canEditChallenge } from '../domain/challenge-status'
+import { RequirementsList } from './requirements'
 
 export type ChallengeDetail = Awaited<ReturnType<typeof challengeDetail>>
 export function ChallengePage({ id }: { id: string }) {
@@ -29,13 +30,27 @@ export function ChallengePage({ id }: { id: string }) {
   const [tab, setTab] = useState('brief')
   const [inviteOpen, setInviteOpen] = useState(false)
   const [startKind, setStartKind] = useState<'initial' | 'repeat' | 'redo' | 'moderator' | null>(null)
-  const { run, pending } = useAction()
+  const { run, pending, toast } = useAction()
   if (error) return <ErrorState error={error} retry={refetch} />
   if (!data) return <Loading />
   const { challenge, attempts, leaderboard } = data
   const active = attempts.find((a) => !a.submittedAt)
+  const privateSubmission = data.privateSubmissions[0]
+  const brief = active?.brief || challenge.brief
   const previous = data.submissions.find((s) => s.userId === session?.user?.id)
   const canEdit = session?.user ? canEditChallenge(challenge, session.user) : false
+  async function copyBrief() {
+    try {
+      const checklist = active?.requirements ?? challenge.requirements
+      const text = checklist.length
+        ? `${brief}\n\n## Checklist\n\n${checklist.map((item) => `- [ ] ${item.title}${item.kind === 'stretch' ? ' (optional stretch goal)' : ''}${item.details ? `\n  ${item.details}` : ''}`).join('\n')}`
+        : brief
+      await navigator.clipboard.writeText(text)
+      toast('Challenge brief copied.')
+    } catch {
+      toast('Couldn’t access the clipboard. Select the brief and copy it manually.', true)
+    }
+  }
   async function accept() {
     const result = await run(
       `challenges/${id}/accept`,
@@ -91,6 +106,21 @@ export function ChallengePage({ id }: { id: string }) {
       )}
       <div className="grid items-start gap-7 xl:grid-cols-[minmax(0,1fr)_310px]">
         <div>
+          {privateSubmission && (
+            <div className="panel mb-6 p-5">
+              <p className="text-sm font-semibold">Your private submission is saved.</p>
+              <p className="mt-2 text-xs leading-5 text-muted">
+                Only you can see it. Publish when you’re ready to share and release eligible kudos.
+              </p>
+              <Link
+                to="/submissions/$id"
+                params={{ id: privateSubmission.id }}
+                className="btn btn-secondary mt-3"
+              >
+                Review & publish
+              </Link>
+            </div>
+          )}
           <div className="mb-6 flex gap-6 border-b border-line">
             {[
               ['brief', 'The brief'],
@@ -107,9 +137,20 @@ export function ChallengePage({ id }: { id: string }) {
             ))}
           </div>
           {tab === 'brief' && (
-            <div className="panel p-6 sm:p-8">
-              <p className="eyebrow mb-5">What you’re building</p>
-              <Markdown>{active?.brief || challenge.brief}</Markdown>
+            <div className="panel relative p-6 sm:p-8">
+              <p className="eyebrow mb-5 pr-14">What you’re building</p>
+              <button
+                type="button"
+                onClick={copyBrief}
+                aria-label="Copy challenge brief"
+                title="Copy brief as Markdown"
+                className="absolute top-2 right-2 inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-muted hover:bg-canvas hover:text-ink"
+              >
+                <Copy size={14} aria-hidden="true" />
+                Copy
+              </button>
+              <Markdown>{brief}</Markdown>
+              <RequirementsList items={active?.requirements ?? challenge.requirements} />
               {active && active.brief !== challenge.brief && (
                 <p className="mt-5 text-xs text-muted">
                   Showing the original brief you accepted. Your deadline and award are preserved.
@@ -198,6 +239,14 @@ export function ChallengePage({ id }: { id: string }) {
                   Late? You can still share your work, just without kudos.
                 </p>
               </>
+            ) : privateSubmission ? (
+              <Link
+                to="/submissions/$id"
+                params={{ id: privateSubmission.id }}
+                className="btn btn-primary w-full"
+              >
+                View private submission
+              </Link>
             ) : challenge.status === 'archived' ? (
               <p className="text-sm leading-6 text-muted">
                 This challenge is archived and closed to new attempts.

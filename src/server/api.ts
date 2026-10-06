@@ -17,7 +17,18 @@ import {
   submissionDetail,
 } from './queries'
 import { image, uploadScreenshot } from './snapshots'
-import { moderateSubmission, snapshotFile, submitProject } from './submissions'
+import { moderateSubmission, publishSubmission, snapshotFile, submitProject } from './submissions'
+import {
+  linkTranscript,
+  moderateTranscript,
+  removeTranscript,
+  transcriptDetail,
+  uploadTranscript,
+} from './transcripts'
+import { connectedAgents, revokeAgent } from './agent-auth'
+import { approveDraft, draftDetail, listDrafts, refreshDraft, rejectDraft } from './agent-drafts'
+import { addHighlight, removeHighlight, savePortfolioPins, updateShowcase } from './showcase'
+import { shareImage } from './social'
 
 type Handler = (c: Context, id: string) => Promise<unknown>
 const routes: [string, RegExp, Handler][] = [
@@ -27,7 +38,10 @@ const routes: [string, RegExp, Handler][] = [
   ['POST', /^github\/webhook$/, webhook],
   ['GET', /^bootstrap$/, bootstrap],
   ['GET', /^home$/, home],
+  ['GET', /^share\/submissions\/([^/]+)\.png$/, (c, id) => shareImage(c, 'submissions', id)],
+  ['GET', /^share\/people\/([^/]+)\.png$/, (c, id) => shareImage(c, 'people', id)],
   ['GET', /^people$/, people],
+  ['POST', /^portfolio\/pins$/, savePortfolioPins],
   ['GET', /^people\/([^/]+)$/, profile],
   ['POST', /^people\/([^/]+)\/follow$/, follow],
   ['GET', /^notifications$/, inbox],
@@ -44,9 +58,25 @@ const routes: [string, RegExp, Handler][] = [
   ['GET', /^repositories$/, repositories],
   ['GET', /^repositories\/(\d+)\/commits$/, (c, id) => commits(c, Number(id))],
   ['POST', /^uploads$/, uploadScreenshot],
+  ['POST', /^transcripts\/upload$/, uploadTranscript],
+  ['POST', /^transcripts\/link$/, (c) => linkTranscript(c)],
+  ['GET', /^transcripts\/([^/]+)$/, transcriptDetail],
+  ['POST', /^transcripts\/([^/]+)\/moderate$/, moderateTranscript],
+  ['POST', /^transcripts\/([^/]+)\/remove$/, removeTranscript],
+  ['GET', /^agents$/, connectedAgents],
+  ['POST', /^agents\/([^/]+)\/revoke$/, revokeAgent],
+  ['GET', /^agent-submissions$/, listDrafts],
+  ['GET', /^agent-submissions\/([^/]+)$/, draftDetail],
+  ['POST', /^agent-submissions\/([^/]+)\/approve$/, approveDraft],
+  ['POST', /^agent-submissions\/([^/]+)\/refresh$/, refreshDraft],
+  ['POST', /^agent-submissions\/([^/]+)\/reject$/, rejectDraft],
   ['GET', /^images\/([^/]+)$/, image],
   ['POST', /^submissions$/, submitProject],
+  ['POST', /^submissions\/([^/]+)\/publish$/, publishSubmission],
   ['GET', /^submissions\/([^/]+)$/, submissionDetail],
+  ['POST', /^submissions\/([^/]+)\/showcase$/, updateShowcase],
+  ['POST', /^submissions\/([^/]+)\/highlights$/, addHighlight],
+  ['POST', /^highlights\/([^/]+)\/remove$/, removeHighlight],
   ['GET', /^submissions\/([^/]+)\/files$/, snapshotFile],
   ['POST', /^submissions\/([^/]+)\/vote$/, vote],
   ['POST', /^submissions\/([^/]+)\/comments$/, addComment],
@@ -57,13 +87,14 @@ export async function handle(request: Request) {
   const path = url.pathname.replace(/^\/api\//, '')
   const c = context(env as unknown as Bindings, request)
   try {
+    const isUpload = path === 'uploads' || path === 'transcripts/upload'
     if (request.method !== 'GET' && path !== 'github/webhook') {
       if (request.headers.get('Origin') !== url.origin)
         throw new HttpError(403, 'Request origin does not match this application.')
-      if (path !== 'uploads' && Number(request.headers.get('Content-Length')) > 100_000)
+      if (!isUpload && Number(request.headers.get('Content-Length')) > 100_000)
         throw new HttpError(413, 'Request is too large.')
     }
-    if (request.method === 'POST' && path !== 'uploads') {
+    if (request.method === 'POST' && !isUpload) {
       const body = await limitedBody(request, path === 'github/webhook' ? 1_048_576 : 100_000)
       c.request = new Request(request, { body })
     }

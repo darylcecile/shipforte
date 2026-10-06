@@ -4,6 +4,7 @@ import type { User } from '../db/schema'
 export interface Bindings {
   DB: D1Database
   ASSETS_BUCKET: R2Bucket
+  OAUTH_KV: KVNamespace
   APP_URL: string
   GITHUB_CLIENT_ID: string
   GITHUB_CLIENT_SECRET?: string
@@ -40,7 +41,7 @@ export function ensure<T>(value: T | null | undefined, message = 'Not found'): T
 export function stmt(c: Context, query: string, ...params: unknown[]) {
   return c.env.DB.prepare(query).bind(...params)
 }
-export async function limitedBody(request: Request, limit: number) {
+export async function limitedBody(request: Pick<Request, 'body'>, limit: number) {
   const reader = request.body?.getReader()
   if (!reader) return new Uint8Array()
   const chunks: Uint8Array[] = []
@@ -67,7 +68,11 @@ export async function limitedBody(request: Request, limit: number) {
   }
   return bytes
 }
-export type Guard = { table: 'users' | 'challenges' | 'submissions'; id: string; revision: number }
+export type Guard = {
+  table: 'users' | 'challenges' | 'submissions' | 'submission_drafts' | 'agent_connections'
+  id: string
+  revision: number
+}
 export async function atomic(c: Context, guards: Guard[], writes: D1PreparedStatement[]) {
   const id = crypto.randomUUID()
   const tests = guards.map((g) => `(SELECT revision = ? FROM ${g.table} WHERE id = ?)`).join(' AND ') || '1'
@@ -89,7 +94,7 @@ export async function atomic(c: Context, guards: Guard[], writes: D1PreparedStat
   } catch (error) {
     const message = String(error)
     if (message.includes('repository_claims.user_id') || message.includes('fingerprints.root_id')) {
-      throw new HttpError(409, 'This repository or copied implementation has already earned kudos.')
+      throw new HttpError(409, 'This repository or copied implementation has already been claimed for kudos.')
     }
     if (message.includes('mutation_conflict') || message.includes('UNIQUE constraint')) {
       throw new HttpError(409, 'This changed while you were working. Refresh and try again.')

@@ -6,6 +6,12 @@ import type { Repository } from '../server/github'
 import { api, useData } from './api'
 import { ErrorState, Field } from './components'
 import { useAction, useSession } from './provider'
+import { TranscriptAttachments, type Transcript } from './transcripts'
+import { VisibilityField } from './submission-visibility'
+import type { SubmissionVisibility } from '../domain/submission-visibility'
+import { withRequirements, type RequirementEvidence } from '../domain/challenge-requirements'
+import { EvidenceEditor } from './requirements'
+import { ShowcaseFields } from './showcase'
 
 type Uploaded = { id: string; name: string; url: string }
 export function SubmissionForm({ attempt }: { attempt: Attempt }) {
@@ -24,6 +30,10 @@ export function SubmissionForm({ attempt }: { attempt: Attempt }) {
   const selectedRepo = repos?.find((r) => String(r.id) === repoId)
   const [images, setImages] = useState<Uploaded[]>([])
   const [uploading, setUploading] = useState(false)
+  const [transcripts, setTranscripts] = useState<Transcript[]>([])
+  const [attaching, setAttaching] = useState(false)
+  const [visibility, setVisibility] = useState<SubmissionVisibility>('public')
+  const [evidence, setEvidence] = useState<RequirementEvidence[]>([])
   const { run, pending, toast } = useAction()
   const navigate = useNavigate()
   async function upload(files: FileList | null) {
@@ -76,24 +86,48 @@ export function SubmissionForm({ attempt }: { attempt: Attempt }) {
           </a>
         </div>
       )}
+      <div className="mt-5">
+        <VisibilityField value={visibility} onChange={setVisibility} disabled={pending} />
+      </div>
+      <TranscriptAttachments
+        items={transcripts}
+        onChange={setTranscripts}
+        onBusy={setAttaching}
+        visibility={visibility}
+      />
       <form
         className="space-y-5"
         onSubmit={async (e) => {
           e.preventDefault()
           const values = new FormData(e.currentTarget)
-          const result = await run<{ id: string; earned: number }>('submissions', {
+          const result = await run<{
+            id: string
+            earned: number
+            withheld: number
+            visibility: SubmissionVisibility
+          }>('submissions', {
             attemptId: attempt.id,
             repoId: Number(repoId),
             title: values.get('title'),
             description: values.get('description'),
             demoUrl: values.get('demoUrl'),
             screenshots: images.map((i) => i.id),
+            transcripts: transcripts.map((item) => item.id),
+            visibility,
+            evidence: evidence.map((item) => ({
+              ...item,
+              screenshots: item.screenshots.filter((id) => images.some((image) => image.id === id)),
+            })),
+            videoUrl: values.get('videoUrl'),
+            learnings: values.get('learnings'),
           })
           if (result) {
             toast(
-              result.earned
-                ? `Shipped! You earned ${result.earned} kudos.`
-                : 'Shipped! Your project is ready for the community.',
+              result.visibility === 'private'
+                ? `Submitted privately. ${result.withheld} kudos withheld until publication.`
+                : result.earned
+                  ? `Shipped! You earned ${result.earned} kudos.`
+                  : 'Shipped! Your project is ready for the community.',
             )
             await navigate({ to: '/submissions/$id', params: { id: result.id } })
           }
@@ -225,15 +259,25 @@ export function SubmissionForm({ attempt }: { attempt: Attempt }) {
             </div>
           )}
         </div>
+        <EvidenceEditor
+          requirements={withRequirements(attempt).requirements}
+          value={evidence}
+          onChange={setEvidence}
+          images={images}
+          disabled={pending}
+        />
+        <ShowcaseFields />
         <button
           className="btn btn-primary w-full"
-          disabled={pending || uploading || !images.length || !repoId}
+          disabled={pending || uploading || attaching || !images.length || !repoId}
         >
           {pending ? (
             <>
               <LoaderCircle size={16} className="animate-spin" />
               Saving your immutable snapshot…
             </>
+          ) : visibility === 'private' ? (
+            'Submit privately'
           ) : (
             'Submit my project ↗'
           )}

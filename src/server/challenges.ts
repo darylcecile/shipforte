@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { attempts, awards, challenges, submissions } from '../db/schema'
 import { attemptAward, categories, day, tiers } from '../domain/rules'
 import { canEditChallenge, editedChallengeStatus, isPublishedChallenge } from '../domain/challenge-status'
+import { requirementsSchema, withRequirements } from '../domain/challenge-requirements'
 import {
   atomic,
   ensure,
@@ -21,6 +22,7 @@ export const challengeInput = z.object({
   title: z.string().trim().min(5).max(120),
   summary: z.string().trim().min(20).max(250),
   brief: z.string().trim().min(50).max(20_000),
+  requirements: requirementsSchema.optional(),
   days: z.number().int().min(1).max(365),
   tier: z.enum(['small', 'medium', 'large', 'xlarge']),
   category: z.enum(categories),
@@ -45,7 +47,7 @@ export async function saveChallenge(c: Context, id?: string) {
     [
       stmt(
         c,
-        'UPDATE challenges SET title=?, summary=?, brief=?, days=?, tier=?, category=?, status=?, updated_at=? WHERE id=?',
+        'UPDATE challenges SET title=?, summary=?, brief=?, days=?, tier=?, category=?, status=?, updated_at=?,requirements=? WHERE id=?',
         value.title,
         value.summary,
         value.brief,
@@ -54,6 +56,7 @@ export async function saveChallenge(c: Context, id?: string) {
         value.category,
         editedChallengeStatus(previous.status),
         now,
+        JSON.stringify(value.requirements ?? withRequirements(previous).requirements),
         id,
       ),
     ],
@@ -149,6 +152,22 @@ export async function startAttempt(c: Context, challengeId: string) {
     .get()
   if (active)
     throw new HttpError(409, 'You already have an attempt in progress. Its original deadline still applies.')
+  const unpublished = await c.db
+    .select({ id: submissions.id })
+    .from(submissions)
+    .where(
+      and(
+        eq(submissions.userId, user.id),
+        eq(submissions.challengeId, challengeId),
+        eq(submissions.visibility, 'private'),
+      ),
+    )
+    .get()
+  if (unpublished)
+    throw new HttpError(
+      409,
+      'Publish your private submission before starting another attempt for this challenge.',
+    )
   const previous = await c.db
     .select()
     .from(submissions)
@@ -184,7 +203,7 @@ export async function startAttempt(c: Context, challengeId: string) {
   const writes = [
     stmt(
       c,
-      'INSERT INTO attempts(id,user_id,challenge_id,title,brief,tier,days,full_award,award,kind,previous_id,restore_ids,started_at,deadline) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO attempts(id,user_id,challenge_id,title,brief,tier,days,full_award,award,kind,previous_id,restore_ids,started_at,deadline,requirements) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       id,
       user.id,
       challengeId,
@@ -199,6 +218,7 @@ export async function startAttempt(c: Context, challengeId: string) {
       JSON.stringify(restoreIds),
       now,
       now + challenge.days * day,
+      JSON.stringify(withRequirements(challenge).requirements),
     ),
     event(
       c,

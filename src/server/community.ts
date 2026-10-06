@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { challenges, follows, submissions, users, votes } from '../db/schema'
+import { attempts, challenges, follows, users, votes } from '../db/schema'
+import { requirementId, withRequirements } from '../domain/challenge-requirements'
 import { redoEligible } from '../domain/rules'
 import {
   atomic,
@@ -14,13 +15,14 @@ import {
   type Context,
 } from './context'
 import { loadManifest } from './snapshots'
+import { publicSubmission } from './submission-access'
 
 export async function vote(c: Context, id: string) {
   const user = requireUser(c)
   const { value } = z
     .object({ value: z.enum(['up', 'down', 'redo']).nullable() })
     .parse(await c.request.json())
-  const row = ensure(await c.db.select().from(submissions).where(eq(submissions.id, id)).get())
+  const row = await publicSubmission(c, id)
   if (row.userId === user.id) throw new HttpError(403, 'You cannot vote on your own submission.')
   if (row.archived || row.revoked) throw new HttpError(403, 'Voting is closed on this submission.')
   const totals = await stmt(
@@ -74,9 +76,17 @@ export async function addComment(c: Context, id: string) {
       file: z.string().max(1024).nullable().default(null),
       line: z.number().int().positive().nullable().default(null),
       endLine: z.number().int().positive().nullable().default(null),
+      requirementId: requirementId.nullable().default(null),
     })
     .parse(await c.request.json())
-  const submission = ensure(await c.db.select().from(submissions).where(eq(submissions.id, id)).get())
+  const submission = await publicSubmission(c, id)
+  if (input.requirementId) {
+    const attempt = ensure(
+      await c.db.select().from(attempts).where(eq(attempts.id, submission.attemptId)).get(),
+    )
+    if (input.file || !withRequirements(attempt).requirements.some((item) => item.id === input.requirementId))
+      throw new HttpError(400, 'Choose a requirement from this submission’s accepted checklist.')
+  }
   if (input.file) {
     const manifest = await loadManifest(c, submission.manifestKey)
     const file = ensure(
@@ -92,7 +102,7 @@ export async function addComment(c: Context, id: string) {
   const writes = [
     stmt(
       c,
-      'INSERT INTO comments(id,submission_id,user_id,body,file,line,end_line,commit_sha,created_at) VALUES(?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO comments(id,submission_id,user_id,body,file,line,end_line,commit_sha,created_at,requirement_id) VALUES(?,?,?,?,?,?,?,?,?,?)',
       commentId,
       id,
       user.id,
@@ -102,6 +112,7 @@ export async function addComment(c: Context, id: string) {
       input.endLine,
       input.file ? submission.commitSha : null,
       Date.now(),
+      input.requirementId,
     ),
   ]
   if (user.id !== submission.userId)

@@ -23,16 +23,39 @@ export function Dashboard() {
   const { data: session } = useSession()
   const [query, setQuery] = useState('')
   const [tier, setTier] = useState('all')
-  const [category, setCategory] = useState('All challenges')
+  const [selectedTab, setSelectedTab] = useState('All challenges')
   if (error) return <ErrorState error={error} retry={refetch} />
   if (!data) return <Loading />
   const active = data.attempts.find((a) => !a.submittedAt)
+  const tab = selectedTab === 'Completed' && !session?.user ? 'All challenges' : selectedTab
+  const showCompleted = tab === 'Completed'
+  const completedCount = data.challenges.filter((c) => c.completed).length
   const matches = data.challenges.filter(
     (c) =>
+      Boolean(c.completed) === showCompleted &&
       `${c.title} ${c.summary}`.toLowerCase().includes(query.toLowerCase()) &&
       (tier === 'all' || c.tier === tier) &&
-      (category === 'All challenges' || c.category === category),
+      (showCompleted || tab === 'All challenges' || c.category === tab),
   )
+  const hasFilters = !!query.trim() || tier !== 'all' || (tab !== 'All challenges' && !showCompleted)
+  const empty = hasFilters
+    ? { title: 'No matching challenges.', description: 'Try another search, size, or category.' }
+    : showCompleted
+      ? {
+          title: 'No completed challenges yet.',
+          description: 'Once you submit a build, its challenge will appear here.',
+        }
+      : completedCount
+        ? {
+            title: 'You’re all caught up.',
+            description:
+              'You’ve completed the available challenges. Revisit a completed build or propose a new idea.',
+          }
+        : {
+            title: 'A little room for a new idea.',
+            description:
+              'The first challenges are on their way. Have an idea? Propose one for the community.',
+          }
   const authError =
     typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('authError') : null
   return (
@@ -140,7 +163,7 @@ export function Dashboard() {
           <div className="flex items-center gap-2">
             <h2 className="text-xl font-semibold tracking-tight">Find your next build</h2>
             <span className="rounded-md border border-line px-1.5 py-0.5 text-[10px] text-muted">
-              {data.challenges.length}
+              {matches.length}
             </span>
           </div>
           <div className="flex gap-2">
@@ -170,13 +193,22 @@ export function Dashboard() {
           </div>
         </div>
         <div className="mb-6 flex gap-1 overflow-x-auto border-b border-line">
-          {['All challenges', ...new Set(data.challenges.map((c) => c.category))].map((item) => (
+          {[
+            'All challenges',
+            ...new Set(data.challenges.map((c) => c.category)),
+            ...(session?.user ? ['Completed'] : []),
+          ].map((item) => (
             <button
               key={item}
-              onClick={() => setCategory(item)}
-              className={`shrink-0 border-b-2 px-3 py-3 text-xs font-medium ${category === item ? 'border-ink text-ink' : 'border-transparent text-muted hover:text-ink'}`}
+              type="button"
+              aria-pressed={tab === item}
+              onClick={() => setSelectedTab(item)}
+              className={`shrink-0 border-b-2 px-3 py-3 text-xs font-medium ${tab === item ? 'border-ink text-ink' : 'border-transparent text-muted hover:text-ink'}`}
             >
               {item}
+              {item === 'Completed' && (
+                <span className="ml-1.5 text-[10px] tabular-nums text-muted">{completedCount}</span>
+              )}
             </button>
           ))}
         </div>
@@ -212,16 +244,34 @@ export function Dashboard() {
           </div>
         ) : (
           <Empty
-            title="A little room for a new idea."
-            description={
-              query
-                ? 'No challenges match your search. Try another term or size.'
-                : 'The first challenges are on their way. Have an idea? Propose one for the community.'
-            }
+            title={empty.title}
+            description={empty.description}
             action={
-              <Link to="/propose" className="btn btn-secondary">
-                Propose a challenge
-              </Link>
+              hasFilters ? (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => {
+                    setQuery('')
+                    setTier('all')
+                    setSelectedTab(showCompleted ? 'Completed' : 'All challenges')
+                  }}
+                >
+                  Clear filters
+                </button>
+              ) : showCompleted || completedCount ? (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setSelectedTab(showCompleted ? 'All challenges' : 'Completed')}
+                >
+                  {showCompleted ? 'Browse challenges' : 'View completed challenges'}
+                </button>
+              ) : (
+                <Link to="/propose" className="btn btn-secondary">
+                  Propose a challenge
+                </Link>
+              )
             }
           />
         )}
@@ -262,32 +312,55 @@ export function Builds() {
       />
       {data.attempts.length ? (
         <div className="grid gap-5 md:grid-cols-2">
-          {data.attempts.map((a) => (
-            <div key={a.id} className="panel p-6">
-              <div className="flex items-center justify-between">
-                <TierBadge tier={a.tier} />
-                <span className="text-xs text-muted">
-                  {a.submittedAt ? 'Submitted' : 'In progress'} · {a.kind}
-                </span>
-              </div>
-              <h2 className="mt-4 text-xl font-semibold">{a.title}</h2>
-              <div className="mt-5">
-                {a.submittedAt ? (
-                  <p className="text-sm text-muted">
-                    {a.submittedAt < a.deadline
-                      ? 'Submitted before the deadline.'
-                      : 'Submitted after the kudos window.'}
-                  </p>
+          {data.attempts.map((a) => {
+            const submitted = data.mySubmissions.find((s) => s.attemptId === a.id)
+            return (
+              <div key={a.id} className="panel p-6">
+                <div className="flex items-center justify-between">
+                  <TierBadge tier={a.tier} />
+                  <span className="text-xs text-muted">
+                    {submitted?.visibility === 'private'
+                      ? 'Submitted privately'
+                      : a.submittedAt
+                        ? 'Submitted'
+                        : 'In progress'}{' '}
+                    · {a.kind}
+                  </span>
+                </div>
+                <h2 className="mt-4 text-xl font-semibold">{a.title}</h2>
+                <div className="mt-5">
+                  {a.submittedAt ? (
+                    <p className="text-sm text-muted">
+                      {a.submittedAt < a.deadline
+                        ? 'Submitted before the deadline.'
+                        : 'Submitted after the kudos window.'}
+                    </p>
+                  ) : (
+                    <Countdown deadline={a.deadline} startedAt={a.startedAt} />
+                  )}
+                </div>
+                {submitted ? (
+                  <Link
+                    to="/submissions/$id"
+                    params={{ id: submitted.id }}
+                    className="btn btn-secondary mt-5"
+                  >
+                    {submitted.visibility === 'private' ? 'Review & publish' : 'View submission'}
+                    <ArrowUpRight size={15} />
+                  </Link>
                 ) : (
-                  <Countdown deadline={a.deadline} startedAt={a.startedAt} />
+                  <Link
+                    to="/challenges/$id"
+                    params={{ id: a.challengeId }}
+                    className="btn btn-secondary mt-5"
+                  >
+                    {a.submittedAt ? 'View challenge' : 'Continue to submission'}
+                    <ArrowUpRight size={15} />
+                  </Link>
                 )}
               </div>
-              <Link to="/challenges/$id" params={{ id: a.challengeId }} className="btn btn-secondary mt-5">
-                {a.submittedAt ? 'View challenge' : 'Continue to submission'}
-                <ArrowUpRight size={15} />
-              </Link>
-            </div>
-          ))}
+            )
+          })}
         </div>
       ) : (
         <Empty

@@ -20,7 +20,7 @@ pnpm dev
 
 Open http://localhost:3000. Populate `.dev.vars` with a development GitHub App's
 configuration to sign in. Local D1 and R2 data are separate from production.
-The seed creates six starter challenges and a platform curator profile; it does
+The seed creates nine starter challenges and a platform curator profile; it does
 not create votes, awards, fake submissions, or login sessions.
 
 ## Connect the GitHub App
@@ -119,6 +119,7 @@ Resources have already been provisioned in the current Cloudflare account:
 - Worker: `snowy-disk-3ef3`
 - D1: `emistry`, bound as `DB`
 - R2: `emistry-assets`, bound as `ASSETS_BUCKET`
+- KV: `shipforte-oauth`, bound as `OAUTH_KV`
 
 Use the Workers Paid plan for repository snapshot processing. The configured CPU
 budget is 60 seconds; paid Workers also allow enough R2 subrequests for the 5,000-file
@@ -134,6 +135,7 @@ For a fresh deployment, starter challenges are optional:
 
 ```sh
 pnpm exec wrangler d1 execute DB --remote --file scripts/seed.sql
+pnpm exec wrangler d1 execute DB --remote --file scripts/seed-more-challenges.sql
 ```
 
 For another account, create a D1 database and R2 bucket with Wrangler, update their
@@ -144,6 +146,95 @@ Schema changes use `pnpm db:generate`, followed by the local and remote migratio
 commands. No PostgreSQL service is used. D1 migrations are checked into `drizzle/`.
 
 ## How the application is organized
+
+### Checklists and showcases
+
+Challenge editors include a structured checklist of up to 30 required features or
+optional stretch goals. Each item has a stable ID, title, and optional details.
+The checklist is copied when an attempt starts. Legacy challenges/attempts with a
+NULL checklist derive one only from explicit requirement sections in their own
+saved brief; an explicitly saved empty checklist stays empty.
+
+Submissions can report completion, notes, and up to five attached screenshots per
+requirement. Evidence is pinned to the version and is labelled as builder-reported;
+it does not replace moderator assessment. Public viewers can leave feedback on a
+specific requirement. MCP reads the same accepted checklist and accepts the same
+evidence and showcase fields through `prepare_submission`.
+
+Authors can add or update an HTTPS recording link and Markdown learning notes on
+their submission. YouTube, Vimeo, and Loom URLs have allowlisted player embeds;
+other links open externally. Showcase edits do not change the submitted code,
+evidence, deadline, or award. Authors may select up to five captioned transcript
+passages; only source references are stored, and excerpts are resolved after
+visibility checks so hiding a transcript also hides its public highlights.
+
+Profiles can feature up to three ordered, public, non-archived, non-revoked builds.
+Public profiles and submissions have share dialogs, downloadable PNG cards, and
+Open Graph tags in their initial HTML for crawlers. Images are rendered by
+`@resvg/resvg-wasm` using a bundled OFL-licensed font; no external rendering service
+or runtime font fetch is needed. Private submissions are excluded even for an
+authenticated owner requesting a share image. The endpoints are
+`/api/share/submissions/:id.png` and `/api/share/people/:login.png`.
+
+### Private submissions and publication
+
+Choose **Private — publish later** to save a submission visible only to its owner
+on Shipforte. The server records the original request time, pins the commit, and
+saves the code, screenshots, and transcripts immediately. Eligible kudos are
+stored as `pending` and excluded from balances until publication. Repository and
+code claims are reserved at that point, so waiting to publish cannot enable reuse.
+
+The owner finds the private snapshot in **My builds** or its challenge page and
+confirms **Publish permanently** when ready. Publication atomically makes it
+public, releases eligible kudos, announces it, and archives its predecessor.
+The original submission timestamp—not publication time—determines deadline
+eligibility. Publication needs no GitHub fetch and never replaces the saved code.
+Repeated requests cannot award twice. A database trigger prevents public-to-private
+changes. A private submission must be published before another attempt for that
+challenge; this keeps version and redo-award ordering unambiguous.
+
+Private submissions, their files/downloads, images, transcripts, and private
+timeline events are owner-only, including against moderator accounts. Community
+votes/comments/moderation become available after publication. Feeds, profile
+counts, rankings, and invitation progress expose public submissions only.
+The repository still must be public on GitHub at submission: Shipforte visibility
+does not change external repositories, demos, or share links.
+
+### Build sessions and agent submissions
+
+Submissions can include up to ten build sessions: Markdown, TXT, JSON, or
+JSONL exports up to 10 MB each, pasted text, or HTTPS share links. Uploads stay
+private until public submission or later publication. Moderators can hide/restore individual public transcripts;
+hidden content and its download remain accessible only to the author and
+moderators. Visibility is checked on each request, without public caching.
+
+Session imports require only a file, pasted transcript, or share URL. Shipforte
+detects the harness, session title, version, agent, models, token usage, and USD
+cost from recognized export metadata. Users do not fill in these fields. Pasted
+JSON/JSONL retains structured detection. Copilot native logs, OpenCode exports,
+Claude Code logs, Codex rollouts, and Cursor export headers are recognized.
+Public single-file Gists can supply metadata through GitHub's public API; other
+share links provide only recognizable host information. Missing fields stay
+unreported, and billing credits/multipliers are never relabelled as USD.
+No transcript is presented as independently verified provenance.
+
+The remote MCP endpoint is **`https://shipforte.com/mcp`**. See [MCP.md](MCP.md)
+for client setup, export guidance, scopes, upload semantics, and the review flow.
+Users manage connections and drafts at `/agents`. Every MCP submission requires
+the account owner's **Approve and submit** button at `/agent-submissions/:id`.
+
+Deployment includes the D1 migration in `drizzle/`, the `shipforte-oauth` KV namespace
+bound as `OAUTH_KV`, and an hourly cleanup trigger. The production namespace ID is
+recorded in `wrangler.jsonc`. For another account, create a KV namespace and update
+that binding. Local development uses local KV. Apply the D1 migration before
+deploying the new code.
+The GitHub App's existing callback remains `/api/auth/callback`.
+
+The cleanup trigger deletes abandoned transcript uploads after seven days,
+excluding uploads referenced by a still-active draft, and removes expired upload
+tickets and rate-limit entries. Submitted transcripts are retained. OAuth records
+use the provider's expiry settings. Drafts expire after seven days; connections
+expire after thirty days and can be revoked immediately in Shipforte.
 
 ```text
 src/db/        Drizzle schema and D1 connection

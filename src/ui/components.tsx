@@ -271,6 +271,16 @@ export function SubmissionCard({ item }: { item: SubmissionCardData }) {
           <ArrowUpRight size={16} className="mt-1 shrink-0 text-muted" />
         </div>
         <p className="mt-1 truncate text-xs text-muted">{item.challengeTitle}</p>
+        {(item.videoUrl || item.learnings) && (
+          <p className="mt-2 text-[11px] text-muted">
+            {[item.videoUrl ? 'Video demo' : '', item.learnings ? 'Build notes' : '']
+              .filter(Boolean)
+              .join(' · ')}
+          </p>
+        )}
+        {item.visibility === 'private' && (
+          <p className="mt-2 text-xs font-medium text-accent">Private · kudos withheld until publication</p>
+        )}
         <div className="mt-5 flex items-center justify-between">
           <span className="flex items-center gap-2 text-xs">
             <Avatar login={item.login} avatar={item.avatar} size="sm" />

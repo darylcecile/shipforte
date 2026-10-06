@@ -185,41 +185,43 @@ function FileReview({
           )}
         </div>
       )}
-      <div className="border-t border-line p-4">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-medium">
-            {range
-              ? `Feedback on lines ${Math.min(range.start, range.end)}–${Math.max(range.start, range.end)}`
-              : 'Feedback on this file'}
+      {data.submission.visibility === 'public' && (
+        <div className="border-t border-line p-4">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-medium">
+              {range
+                ? `Feedback on lines ${Math.min(range.start, range.end)}–${Math.max(range.start, range.end)}`
+                : 'Feedback on this file'}
+            </p>
+            {range && (
+              <button className="text-xs text-muted" onClick={() => setRange(null)}>
+                Clear selection
+              </button>
+            )}
+          </div>
+          <p className="mt-1 text-[11px] leading-5 text-muted">
+            Select line numbers to anchor feedback to this commit.
+            {compare && ' To comment on deleted code, open the previous submission.'}
           </p>
-          {range && (
-            <button className="text-xs text-muted" onClick={() => setRange(null)}>
-              Clear selection
-            </button>
+          {currentExists ? (
+            <CommentForm
+              submissionId={id}
+              file={path}
+              line={range ? Math.min(range.start, range.end) : null}
+              endLine={range ? Math.max(range.start, range.end) : null}
+              onDone={() => setRange(null)}
+            />
+          ) : (
+            <Link
+              to="/submissions/$id"
+              params={{ id: data.submission.previousId! }}
+              className="btn btn-secondary mt-4"
+            >
+              Comment on the previous snapshot
+            </Link>
           )}
         </div>
-        <p className="mt-1 text-[11px] leading-5 text-muted">
-          Select line numbers to anchor feedback to this commit.
-          {compare && ' To comment on deleted code, open the previous submission.'}
-        </p>
-        {currentExists ? (
-          <CommentForm
-            submissionId={id}
-            file={path}
-            line={range ? Math.min(range.start, range.end) : null}
-            endLine={range ? Math.max(range.start, range.end) : null}
-            onDone={() => setRange(null)}
-          />
-        ) : (
-          <Link
-            to="/submissions/$id"
-            params={{ id: data.submission.previousId! }}
-            className="btn btn-secondary mt-4"
-          >
-            Comment on the previous snapshot
-          </Link>
-        )}
-      </div>
+      )}
     </>
   )
 }
