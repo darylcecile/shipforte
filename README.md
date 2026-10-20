@@ -281,6 +281,10 @@ these stored files, not the current GitHub branch. Binary files can be downloade
 and receive file-level feedback; text files support line ranges. Resubmission diffs
 include added, modified, and deleted files.
 
+Snapshot uploads use bounded concurrency and finish before submission finalization.
+GitHub download timeouts apply while waiting for network data, so time spent saving
+files to R2 does not abort an otherwise healthy download.
+
 Screenshots are verified by their file signatures, limited to 10 MB each, and served
 through the Worker. A submission accepts 1–20 PNG, JPEG, or WebP screenshots.
 Repository snapshots are limited to 40 MB expanded, 8 MB per file, and 5,000 files, with explicit

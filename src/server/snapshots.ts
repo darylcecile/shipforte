@@ -24,6 +24,44 @@ export interface Manifest {
   codeHashes: string[]
 }
 const maxExpanded = 40 * 1024 * 1024
+async function waitForDownload<T>(controller: AbortController, read: () => Promise<T>): Promise<T> {
+  const timeout = setTimeout(
+    () =>
+      controller.abort(
+        new HttpError(
+          504,
+          'GitHub took too long to send the repository snapshot. Please retry your submission.',
+        ),
+      ),
+    120_000,
+  )
+  try {
+    const result = await read()
+    controller.signal.throwIfAborted()
+    return result
+  } catch (error) {
+    throw controller.signal.aborted ? controller.signal.reason : error
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+async function* downloadChunks(body: ReadableStream<Uint8Array>, controller: AbortController) {
+  const reader = body.getReader()
+  try {
+    for (;;) {
+      // Only pending network reads count towards the timeout, never time spent storing an entry.
+      const { done, value } = await waitForDownload(controller, () => reader.read())
+      if (done) return
+      yield value
+    }
+  } finally {
+    try {
+      await reader.cancel()
+    } finally {
+      reader.releaseLock()
+    }
+  }
+}
 function byteLimit(limit: number) {
   let total = 0
   return new Transform({
@@ -63,12 +101,22 @@ export async function snapshot(
   token: string,
   publicRead = false,
 ): Promise<Manifest> {
-  const response = await githubResponse(token, `/repos/${repoName}/tarball/${commit}`, publicRead, 120_000)
+  const controller = new AbortController()
+  const response = await waitForDownload(controller, () =>
+    githubResponse(token, `/repos/${repoName}/tarball/${commit}`, publicRead, controller.signal),
+  )
   if (!response.ok || !response.body)
     throw new HttpError(502, 'Could not download the repository snapshot from GitHub. Please retry.')
   const files: SnapshotFile[] = []
   const codeHashes: string[] = []
   const archive = extract()
+  const writes = new Set<Promise<void>>()
+  const queuedHashes = new Set<string>()
+  function fail(error: unknown) {
+    controller.abort(error)
+    archive.destroy(controller.signal.reason as Error)
+  }
+  archive.on('error', fail)
   archive.on('entry', (header, stream, next) => {
     async function store() {
       const parts: Buffer[] = []
@@ -112,22 +160,40 @@ export async function snapshot(
         lines: text.split('\n').length,
         type: fileType(path),
       })
-      await c.env.ASSETS_BUCKET.put(`blobs/${hash}`, bytes)
+      controller.signal.throwIfAborted()
+      if (queuedHashes.has(hash)) return
+      queuedHashes.add(hash)
+      const write = c.env.ASSETS_BUCKET.put(`blobs/${hash}`, bytes).then(
+        () => {
+          writes.delete(write)
+        },
+        (error) => {
+          writes.delete(write)
+          fail(error)
+        },
+      )
+      writes.add(write)
+      // Bound retained file data and leave a connection for GitHub alongside at most four R2 writes.
+      if (writes.size >= 4) await Promise.race(writes)
+      controller.signal.throwIfAborted()
     }
-    store().then(
-      () => next(),
-      (error) => {
-        archive.destroy(error as Error)
-      },
-    )
+    store().then(() => next(), fail)
   })
-  await pipeline(
-    Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
-    byteLimit(maxExpanded),
-    createGunzip(),
-    byteLimit(maxExpanded),
-    archive,
-  )
+  try {
+    await pipeline(
+      Readable.from(downloadChunks(response.body, controller), { objectMode: false }),
+      byteLimit(maxExpanded),
+      createGunzip(),
+      byteLimit(maxExpanded),
+      archive,
+    )
+  } catch (error) {
+    fail(error)
+  } finally {
+    // R2 puts cannot be aborted. Observe every started write, including after extraction fails.
+    await Promise.all(writes)
+  }
+  controller.signal.throwIfAborted()
   if (!files.length) throw new HttpError(400, 'The submitted repository is empty.')
   files.sort((a, b) => a.path.localeCompare(b.path))
   const fingerprint = await digest(

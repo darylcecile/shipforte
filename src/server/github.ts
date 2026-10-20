@@ -16,15 +16,18 @@ export interface Repository {
 
 // Public reads never confer ownership or permission to submit a repository.
 // Those checks happen separately in verifiedRepository.
-export async function githubResponse(token: string, path: string, publicRead = false, timeout = 30_000) {
+export async function githubResponse(token: string, path: string, publicRead = false, signal?: AbortSignal) {
   const url = `https://api.github.com${path}`
-  let response = await fetch(url, { headers: githubHeaders(token), signal: AbortSignal.timeout(timeout) })
+  let response = await fetch(url, {
+    headers: githubHeaders(token),
+    signal: signal ?? AbortSignal.timeout(30_000),
+  })
   const permissionFailure = response.status === 403 || response.status === 404
   const rateLimited =
     response.headers.get('x-ratelimit-remaining') === '0' || response.headers.has('retry-after')
   if (publicRead && permissionFailure && !rateLimited) {
     await response.body?.cancel()
-    response = await fetch(url, { headers: githubHeaders(), signal: AbortSignal.timeout(timeout) })
+    response = await fetch(url, { headers: githubHeaders(), signal: signal ?? AbortSignal.timeout(30_000) })
   }
   if (response.ok) return response
   await response.body?.cancel()
